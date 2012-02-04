@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<title>Todo App - Backbone - Require - Wire - Thomas Davis</title>
+	<link rel="stylesheet" href="css/todos.css">
+
+	<script src="js/_libs/requirejs/require.js"></script>
+
+	<script>
+	if ( window.location.hash === '#dev' ) { // Is dev mode
+		document.write('<script src="js/todos/src/config.js"></sc' + 'ript>');
+
+	} else { // Live mode
+		require.config( {
+			baseUrl: 'js/todos/build',
+			paths: {
+				"text": "../../_libs/requirejs/plugins/text"
+			}
+		} );
+
+		// Feed in our data
+		//define( 'data/stuff', [], {} );
+	}
+	</script>
+
+	<script>
+	// Load the modules
+	require( [ 'todos' ] );
+	</script>
+
+</head>
+<body>
+
+<div id="todoapp">
+
+			<div class="title">
+				<h1>Todos</h1>
+			</div>
+
+			<div class="content">
+
+				<div id="create-todo">
+					<input id="new-todo" placeholder="What needs to be done?" type="text" />
+					<span class="ui-tooltip-top" style="display:none;">Press Enter to save this task</span>
+				</div>
+
+				<div id="todos">
+					<input class="check mark-all-done" type="checkbox"/>
+					<label for="check-all">Mark all as complete</label>
+					<ul id="todo-list"></ul>
+				</div>
+
+				<div id="todo-stats"></div>
+
+			</div>
+
+		</div>
+
+		<div id="credits">
+				<p>Modularized by
+				<a href="http://backbonetutorials.com">Thomas Davis</a>.
+				Originally by 
+			<a href="http://jgn.me/">J&eacute;r&ocirc;me Gravel-Niquet</a>.
+			</p>
+		</div>
+
+</body>
+</html>

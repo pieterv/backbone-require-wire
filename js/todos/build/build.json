@@ -1,0 +1,45 @@
+( {
+	
+	"appDir": "./",
+	"baseUrl": "./",
+	"dir": "../build",
+
+	"optimize": "none",
+
+	"urlArgs": "",
+
+	// Use package settings in the init file
+	"mainConfigFile": "config.js",
+
+	"paths": {
+		// Use our r.js builder plugin
+		"wire/cram/builder": "../../_libs/requirejs/plugins/wire",
+		//"text": "../../_libs/requirejs/plugins/text",
+		"wire/domReady": "../../_libs/requirejs/plugins/domReady"
+	},
+
+	"modules": [
+		{
+			"name": "todos",
+			"include": [
+
+				// // Wire plugins
+				// "wire/jquery/dom",
+				// "wire/underscore/template",
+				// "wire/backbone/events",
+				// //"wire/debug",
+
+				// // Spec Main Modules
+				// "views/app",
+				// "collections/todos",
+				// "specs/todo",
+
+				// // Spec Todo Modules
+				// "views/todo",
+				// "models/todo"
+			]
+		}
+	]
+
+
+} )
