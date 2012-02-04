@@ -1,0 +1,47 @@
+{
+    "name": "wire",
+    "version": "0.8.0",
+    "description": "A light, fast, flexible Javascript IOC container.",
+    "keywords": ["ioc"],
+    "licenses": [
+        {
+            "type": "MIT",
+            "url": "http://www.opensource.org/licenses/mit-license.php"
+        }
+    ],
+    "repositories": [
+        {
+            "type": "git",
+            "url": "https://github.com/briancavalier/wire"
+        }
+    ],
+    "bugs": "https://github.com/briancavalier/wire/issues",
+    "maintainers": [
+        {
+            "name": "Brian Cavalier",
+            "web": "http://hovercraftstudios.com"
+        }
+    ],
+    "contributors": [
+        {
+            "name": "Brian Cavalier",
+            "web": "http://hovercraftstudios.com"
+        },
+        {
+            "name": "John Hann",
+            "web": "http://unscriptable.com"
+        }
+    ],
+    "dependencies": {
+        "aop": "0.5.2",
+        "when": "0.11.x"
+    },
+    "mappings": {
+        "aop": "https://github.com/briancavalier/aop.js/zipball/0.5.2",
+        "when": "https://github.com/briancavalier/when.js/zipball/0.11.x"
+    },
+    "main": "./wire",
+    "directories": {
+        "test": "test"
+    }
+}
