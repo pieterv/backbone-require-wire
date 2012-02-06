@@ -6,6 +6,17 @@
 
 	"optimize": "none",
 
+    // inlining ftw
+    "inlineText": true,
+
+    // kills unneeded plugin code on build
+    "pragmasOnSave": {
+		"excludeAfterBuild": true
+    },
+
+    // Set app locale (not used)
+    "locale": "en_us",
+
 	"urlArgs": "",
 
 	// Use package settings in the init file
@@ -14,8 +25,10 @@
 	"paths": {
 		// Use our r.js builder plugin
 		"wire/cram/builder": "../../_libs/requirejs/plugins/wire",
-		//"text": "../../_libs/requirejs/plugins/text",
-		"wire/domReady": "../../_libs/requirejs/plugins/domReady"
+
+		"wire/domReady": "../../_libs/requirejs/plugins/domReady",
+		
+		"hbs": '../../_libs/handlebars/hbs'
 	},
 
 	"modules": [

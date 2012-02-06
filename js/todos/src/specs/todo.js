@@ -1,5 +1,9 @@
 define( {
 
+  template_todos: {
+    module: 'hbs!templates/todos'
+  },
+
   view: {
     create: {
       module: 'views/todo'
@@ -15,7 +19,7 @@ define( {
       editing: 'editing',
 
       // Pass in our template
-      template: { $ref: 'template.underscore!templates/todos.html' }
+      template: { $ref: 'template_todos' }
     },
 
     // Connect events
@@ -72,8 +76,7 @@ define( {
 
   plugins: [
     //{ module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
-    { module: 'wire/underscore/template' },
     { module: 'wire/backbone/events' }
   ]
-  
+
 } );

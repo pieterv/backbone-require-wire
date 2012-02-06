@@ -1,5 +1,9 @@
 define( {
 
+  template_stats: {
+    module: 'hbs!templates/stats'
+  },
+
   app: {
     create: {
       module: 'views/app',
@@ -21,11 +25,14 @@ define( {
       tooltip: { $ref: 'dom.query!.ui-tooltip-top', i:0 },
 
       // Templates
-      statsTemplate: { $ref: 'template.underscore!templates/stats.html' } // Creates a renderable template from the html file
+      statsTemplate: { $ref: 'template_stats' } // Creates a renderable template from the html file
 
     },
     // Connect to events
     connect: {
+
+      
+
       collection: {
         'add':   'addOne', // When a model is added, add the view to the app list
         'reset': 'addAll', // When muptliple models are added, add them all to the app list
@@ -64,8 +71,6 @@ define( {
   plugins: [
     //{ module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
     { module: 'wire/jquery/dom' },
-    { module: 'wire/underscore/template' },
     { module: 'wire/backbone/events' }
   ]
-  
 } );
