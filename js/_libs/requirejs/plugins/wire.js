@@ -8,9 +8,9 @@
  * Builder plugin for cram
  * https://github.com/unscriptable/cram
  */
-define([ 'wire/base', 'when' ], function() {
+define([ 'wire/base' ], function() {
 
-	var defaultModuleRegex, defaultSpecRegex, fs, buildMap = [];
+	var defaultModuleRegex, defaultSpecRegex, fs;
 	// default dependency regex
 	defaultModuleRegex = /\.(module|create)$/;
 	defaultSpecRegex = /\.(wire|spec)$/;
@@ -28,13 +28,17 @@ define([ 'wire/base', 'when' ], function() {
 		callback(fs.readFileSync(path, 'utf8'));
 	}
 
-	// Main plugin
 	function analyze(name, req, load, config) {
+
 		// Track all modules seen in wire spec, so we only include them once
-		var childSpecRegex, moduleRegex;
+		var modules, seenModules, specs, spec, i, childSpecRegex, moduleRegex;
 
 		moduleRegex = defaultModuleRegex;
 		childSpecRegex = defaultSpecRegex;
+
+		// Initalise
+		seenModules = {};
+		modules = [];
 
 		// Get config values
 		if(config) {
@@ -44,18 +48,18 @@ define([ 'wire/base', 'when' ], function() {
 
 		function addAbsoluteDep(absoluteId) {
 			// Only add the moduleId if we haven't already
-			if ( req.specified(absoluteId) ) return;
+			if (absoluteId in seenModules) return;
 
-			req( absoluteId );
+			seenModules[absoluteId] = 1;
+			modules.push(absoluteId);
 		}
 
 		function addDependency(moduleId) {
-			addAbsoluteDep( moduleId );
+			addAbsoluteDep(moduleId);
 		}
 
 		function addChildSpec(specId) {
-			analyze( specId, req, load, config );
-			//addAbsoluteDep( 'wire' + '!' + specId );
+			addAbsoluteDep('wire' + '!' + specId);
 		}
 
 		function scanObj(obj, path) {
@@ -106,17 +110,27 @@ define([ 'wire/base', 'when' ], function() {
 			return moduleRegex.test(path);
 		}
 
-		// 
-		req( [ name ], function() {} );
-
+		// Read in our spec file
 		fetchText( req.toUrl( name ), function( text ) {
-			load.fromText( 'build/' + name, text );
-			req( [ 'build/' + name ], function( spec ) {
-				scanObj( spec );
-				load( spec );
+
+			// Load our spec to as module from the text, then grab it via require
+			load.fromText( 'wire/builder/' + name, text );
+			req( [ 'wire/builder/' + name ], function( spec_obj ) {
+
+				// Scan for dependency
+				scanObj( spec_obj );
+
+				// Add itself as its last dependency
+				addDependency( name );
+
+				// Load our dependences as an AMD module so they are called correctly
+				// This will always have at least one module to call (the spec)
+				load.fromText( 'wire/builder/deps/' + name, 'define( ["' + modules.join( '","' ) + '"], {} );' );
+				
+				// tell r.js that we are finished working
+				load( spec_obj );
 			} );
 		} );
-
 
 	}
 
