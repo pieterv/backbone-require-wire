@@ -7,7 +7,7 @@ define( function( require ) {
   return Backbone.Model.extend({
 
     initialize: function( attrs, options ) {
-      console.log( 'RECEIVED "todo_attributes":', attrs );
+      console.log( '***RECEIVED: "todo_attributes"', attrs );
     },
 
     // Default attributes for the todo
