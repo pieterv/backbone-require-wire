@@ -1,16 +1,16 @@
 
-/**
- * @license Copyright (c) 2011 Brian Cavalier
- * LICENSE: see the LICENSE.txt file. If file is missing, this file is subject
- * to the MIT License at: http://www.opensource.org/licenses/mit-license.php.
- */
+/** @license MIT License (c) copyright B Cavalier & J Hann */
 
 /**
- * when.js
+ * when
  * A lightweight CommonJS Promises/A and when() implementation
  *
- * @version 0.10.4
- * @author brian@hovercraftstudios.com
+ * when is part of the cujo.js family of libraries (http://cujojs.com/)
+ *
+ * Licensed under the MIT License at:
+ * http://www.opensource.org/licenses/mit-license.php
+ *
+ * @version 1.0.4
  */
 
 (function(define) {
@@ -32,7 +32,7 @@ define('when',[],function() {
     function allocateArray(n) {
         return new Array(n);
     }
-    
+
     /**
      * Use freeze if it exists
      * @function
@@ -89,6 +89,87 @@ define('when',[],function() {
         };
 
     /**
+     * Trusted Promise constructor.  A Promise created from this constructor is
+     * a trusted when.js promise.  Any other duck-typed promise is considered
+     * untrusted.
+     */
+    function Promise() {}
+
+    /**
+     * Create an already-resolved promise for the supplied value
+     * @private
+     *
+     * @param value anything
+     * @return {Promise}
+     */
+    function resolved(value) {
+
+        var p = new Promise();
+
+        p.then = function(callback) {
+            checkCallbacks(arguments);
+
+            var nextValue;
+            try {
+                if(callback) nextValue = callback(value);
+                return promise(nextValue === undef ? value : nextValue);
+            } catch(e) {
+                return rejected(e);
+            }
+        };
+
+        return freeze(p);
+    }
+
+    /**
+     * Create an already-rejected {@link Promise} with the supplied
+     * rejection reason.
+     * @private
+     *
+     * @param reason rejection reason
+     * @return {Promise}
+     */
+    function rejected(reason) {
+
+        var p = new Promise();
+
+        p.then = function(callback, errback) {
+            checkCallbacks(arguments);
+
+            var nextValue;
+            try {
+                if(errback) {
+                    nextValue = errback(reason);
+                    return promise(nextValue === undef ? reason : nextValue)
+                }
+
+                return rejected(reason);
+
+            } catch(e) {
+                return rejected(e);
+            }
+        };
+
+        return freeze(p);
+    }
+
+    /**
+     * Helper that checks arrayOfCallbacks to ensure that each element is either
+     * a function, or null or undefined.
+     *
+     * @param arrayOfCallbacks {Array} array to check
+     * @throws {Error} if any element of arrayOfCallbacks is something other than
+     * a Functions, null, or undefined.
+     */
+    function checkCallbacks(arrayOfCallbacks) {
+        var arg, i = arrayOfCallbacks.length;
+        while(i) {
+            arg = arrayOfCallbacks[--i];
+            if (arg != null && typeof arg != 'function') throw new Error('callback is not a function');
+        }
+    }
+
+    /**
      * Creates a new, CommonJS compliant, Deferred with fully isolated
      * resolver and promise parts, either or both of which may be given out
      * safely to consumers.
@@ -102,7 +183,7 @@ define('when',[],function() {
      * @returns {Deferred}
      */
     function defer() {
-        var deferred, promise, resolver, result, listeners, progressHandlers, _then, _progress, complete;
+        var deferred, promise, listeners, progressHandlers, _then, _progress, complete;
 
         listeners = [];
         progressHandlers = [];
@@ -116,29 +197,39 @@ define('when',[],function() {
          * @param [callback] {Function} resolution handler
          * @param [errback] {Function} rejection handler
          * @param [progback] {Function} progress handler
+         *
+         * @throws {Error} if any argument is not null, undefined, or a Function
          */
         _then = function unresolvedThen(callback, errback, progback) {
-            var d = defer();
+            // Check parameters and fail immediately if any supplied parameter
+            // is not null/undefined and is also not a function.
+            // That is, any non-null/undefined parameter must be a function.
+            checkCallbacks(arguments);
 
-            listeners.push({
-                deferred: d,
-                resolve: callback,
-                reject: errback
+            var deferred = defer();
+
+            listeners.push(function(promise) {
+                promise.then(callback, errback)
+                    .then(deferred.resolve, deferred.reject, deferred.progress);
             });
 
             progback && progressHandlers.push(progback);
 
-            return d.promise;
+            return deferred.promise;
         };
 
         /**
-         * Registers a handler for this {@link Deferred}'s {@link Promise}
+         * Registers a handler for this {@link Deferred}'s {@link Promise}.  Even though all arguments
+         * are optional, each argument that *is* supplied must be null, undefined, or a Function.
+         * Any other value will cause an Error to be thrown.
          *
          * @memberOf Promise
          *
-         * @param callback {Function}
-         * @param [errback] {Function}
-         * @param [progback] {Function}
+         * @param [callback] {Function} resolution handler
+         * @param [errback] {Function} rejection handler
+         * @param [progback] {Function} progress handler
+         *
+         * @throws {Error} if any argument is not null, undefined, or a Function
          */
         function then(callback, errback, progback) {
             return _then(callback, errback, progback);
@@ -153,7 +244,7 @@ define('when',[],function() {
          * @param val anything
          */
         function resolve(val) {
-            complete('resolve', val);
+            complete(resolved(val));
         }
 
         /**
@@ -165,7 +256,7 @@ define('when',[],function() {
          * @param err anything
          */
         function reject(err) {
-            complete('reject', err);
+            complete(rejected(err));
         }
 
         /**
@@ -195,27 +286,17 @@ define('when',[],function() {
          *
          * @private
          *
-         * @param which {String} either "resolve" or "reject"
-         * @param val anything resolution value or rejection reason
+         * @param completed {Promise} the completed value of this deferred
          */
-        complete = function(which, val) {
-            // Save original _then
-            var origThen = _then;
+        complete = function(completed) {
+            var listener, i = 0;
 
-            // Replace _then with one that immediately notifies
-            // with the result.
-            _then = function newThen(callback, errback) {
-                var promise = origThen(callback, errback);
-                notify(which);
-                return promise;
-            };
+            // Replace _then with one that directly notifies with the result.
+            _then = completed.then;
 
-            // Replace complete so that this Deferred
-            // can only be completed once.  Note that this leaves
-            // notify() intact so that it can be used in the
-            // rewritten _then above.
-            // Replace _progress, so that subsequent attempts
-            // to issue progress throw.
+            // Replace complete so that this Deferred can only be completed
+            // once. Also Replace _progress, so that subsequent attempts to issue
+            // progress throw.
             complete = _progress = function alreadyCompleted() {
                 // TODO: Consider silently returning here so that parties who
                 // have a reference to the resolver cannot tell that the promise
@@ -227,60 +308,15 @@ define('when',[],function() {
             // for this promise again now that it's completed
             progressHandlers = undef;
 
-            // Final result of this Deferred.  This is immutable
-            result = val;
-
             // Notify listeners
-            notify(which);
-        };
+            // Traverse all listeners registered directly with this Deferred
 
-        /**
-         * Notify all listeners of resolution or rejection
-         *
-         * @param which {String} either "resolve" or "reject"
-         */
-        function notify(which) {
-            // Traverse all listeners registered directly with this Deferred,
-            // also making sure to handle chained thens
-
-            var listener, ldeferred, newResult, handler, localListeners, i = 0;
-
-            // Reset the listeners array asap.  Some of the promise chains in the loop
-            // below could run async, so need to ensure that no callers can corrupt
-            // the array we're iterating over, but also need to allow callers to register
-            // new listeners.
-            localListeners = listeners;
-            listeners = [];
-
-            while (listener = localListeners[i++]) {
-
-                ldeferred = listener.deferred;
-                handler = listener[which];
-
-                try {
-
-                    newResult = handler ? handler(result) : result;
-
-                    if (isPromise(newResult)) {
-                        // If the handler returned a promise, chained deferreds
-                        // should complete only after that promise does.
-                        _chain(newResult, ldeferred);
-
-                    } else {
-                        // Complete deferred from chained then()
-                        // FIXME: Which is correct?
-                        // The first always mutates the chained value, even if it is undefined
-                        // The second will only mutate if newResult !== undefined
-                        // ldeferred[which](newResult);
-                        ldeferred[which](newResult === undef ? result : newResult);
-
-                    }
-                } catch (e) {
-                    // Exceptions cause chained deferreds to reject
-                    ldeferred.reject(e);
-                }
+            while (listener = listeners[i++]) {
+                listener(completed);
             }
-        }
+
+            listeners = [];
+        };
 
         /**
          * The full Deferred object, with both {@link Promise} and {@link Resolver}
@@ -300,34 +336,30 @@ define('when',[],function() {
          * @namespace Promise
          * @name Promise
          */
-        promise =
+        promise = new Promise();
+        promise.then = deferred.then = then;
+
         /**
          * The {@link Promise} for this {@link Deferred}
          * @memberOf Deferred
          * @name promise
          * @type {Promise}
          */
-            deferred.promise = freeze({
-                then: (deferred.then = then)
-            });
+        deferred.promise = freeze(promise);
 
         /**
-         * The Resolver API
+         * The {@link Resolver} for this {@link Deferred}
          * @namespace Resolver
          * @name Resolver
-         */
-        resolver =
-        /**
-         * The {@link Resolver} for this {@link Deferred}
          * @memberOf Deferred
          * @name resolver
          * @type {Resolver}
          */
-            deferred.resolver = freeze({
-                resolve:  (deferred.resolve  = resolve),
-                reject:   (deferred.reject   = reject),
-                progress: (deferred.progress = progress)
-            });
+        deferred.resolver = freeze({
+            resolve:  (deferred.resolve  = resolve),
+            reject:   (deferred.reject   = reject),
+            progress: (deferred.progress = progress)
+        });
 
         return deferred;
     }
@@ -368,16 +400,16 @@ define('when',[],function() {
     function when(promiseOrValue, callback, errback, progressHandler) {
         // Get a promise for the input promiseOrValue
         // See promise()
-        var inputPromise = promise(promiseOrValue);
+        var trustedPromise = promise(promiseOrValue);
 
         // Register promise handlers
-        return inputPromise.then(callback, errback, progressHandler);
+        return trustedPromise.then(callback, errback, progressHandler);
     }
 
     /**
-     * Returns promiseOrValue if promiseOrValue is a {@link Promise}, or a new,
-     * already-resolved {@link Promise} whose resolution value is promiseOrValue if
-     * promiseOrValue is an immediate value.
+     * Returns promiseOrValue if promiseOrValue is a {@link Promise}, a new Promise if
+     * promiseOrValue is a foreign promise, or a new, already-resolved {@link Promise}
+     * whose resolution value is promiseOrValue if promiseOrValue is an immediate value.
      *
      * Note that this function is not safe to export since it will return its
      * input when promiseOrValue is a {@link Promise}
@@ -386,29 +418,43 @@ define('when',[],function() {
      *
      * @param promiseOrValue anything
      *
-     * @returns if promiseOrValue is a {@link Promise} returns promiseOrValue,
-     *   otherwise, returns a new, already-resolved, {@link Promise} whose resolution
-     *   value is promiseOrValue.
+     * @returns Guaranteed to return a trusted Promise.  If promiseOrValue is a when.js {@link Promise}
+     *   returns promiseOrValue, otherwise, returns a new, already-resolved, when.js {@link Promise}
+     *   whose resolution value is:
+     *   * the resolution value of promiseOrValue if it's a foreign promise, or
+     *   * promiseOrValue if it's a value
      */
     function promise(promiseOrValue) {
-        return isPromise(promiseOrValue) ? promiseOrValue : resolved(promiseOrValue);
-    }
+        var promise, deferred;
 
-    /**
-     * Creates a promise that is immediately resolved to the supplied value.
-     *
-     * @private
-     *
-     * @param value anything
-     *
-     * @return {Promise} a new, already resolved {@link Promise} whose resolution
-     * value is the supplied value.
-     */
-    function resolved(value) {
-        // TODO: Consider making this public, along with a corresponding rejected()
-        var deferred = defer();
-        deferred.resolve(value);
-        return deferred.promise;
+        if(promiseOrValue instanceof Promise) {
+            // It's a when.js promise, so we trust it
+            promise = promiseOrValue;
+
+        } else {
+            // It's not a when.js promise.  Check to see if it's a foreign promise
+            // or a value.
+
+            deferred = defer();
+            if(isPromise(promiseOrValue)) {
+                // It's a compliant promise, but we don't know where it came from,
+                // so we don't trust its implementation entirely.  Introduce a trusted
+                // middleman when.js promise
+
+                // IMPORTANT: This is the only place when.js should ever call .then() on
+                // an untrusted promise.
+                promiseOrValue.then(deferred.resolve, deferred.reject, deferred.progress);
+                promise = deferred.promise;
+
+            } else {
+                // It's a value, not a promise.  Create an already-resolved promise
+                // for it.
+                deferred.resolve(promiseOrValue);
+                promise = deferred.promise;
+            }
+        }
+
+        return promise;
     }
 
     /**
@@ -577,6 +623,8 @@ define('when',[],function() {
         i = promisesOrValues.length;
         results = allocateArray(i);
 
+        // Since mapFunc may be async, get all invocations of it into flight
+        // asap, and then use reduce() to collect all the results
         for(;i >= 0; --i) {
             if(i in promisesOrValues)
                 results[i] = when(promisesOrValues[i], mapFunc);
@@ -617,7 +665,7 @@ define('when',[],function() {
         // to the actual reduce engine below.
 
         // Wrap the supplied reduceFunc with one that handles promises and then
-        // deletegates to the supplied.
+        // delegates to the supplied.
 
         args = [
             function (current, val, i) {
@@ -636,7 +684,7 @@ define('when',[],function() {
 
     /**
      * Ensure that resolution of promiseOrValue will complete resolver with the completion
-     * value of promiseOrValue, or instead with optionalValue if it is provided.
+     * value of promiseOrValue, or instead with resolveValue if it is provided.
      *
      * @memberOf when
      *
@@ -647,48 +695,20 @@ define('when',[],function() {
      * @returns {Promise}
      */
     function chain(promiseOrValue, resolver, resolveValue) {
-        var inputPromise, initChain;
+        var useResolveValue = arguments.length > 2;
 
-        inputPromise = promise(promiseOrValue);
-
-        // Check against args length instead of resolvedValue === undefined, since
-        // undefined may be a valid resolution value.
-        initChain = arguments.length > 2
-            ? function(resolver) { return _chain(inputPromise, resolver, resolveValue); }
-            : function(resolver) { return _chain(inputPromise, resolver); };
-
-        // Setup chain to supplied resolver
-        initChain(resolver);
-
-        // Setup chain to new promise
-        return initChain(when.defer()).promise;
-    }
-
-    /**
-     * @private
-     * Internal chain helper that does not create a new deferred/promise
-     * Always returns it's 2nd arg.
-     * NOTE: deferred must be a when.js deferred, or a resolver whose functions
-     * can be called without their original context.
-     *
-     * @param promise
-     * @param deferred
-     * @param resolveValue
-     *
-     * @returns deferred
-     */
-    function _chain(promise, deferred, resolveValue) {
-        promise.then(
-            // If resolveValue was supplied, need to wrap up a new function
-            // If not, can use deferred.resolve directly
-            arguments.length > 2
-                ? function() { deferred.resolve(resolveValue); }
-                : deferred.resolve,
-            deferred.reject,
-            deferred.progress
+        return when(promiseOrValue,
+            function(val) {
+				if(useResolveValue) val = resolveValue;
+                resolver.resolve(val);
+				return val;
+            },
+			function(e) {
+				resolver.reject(e);
+				return rejected(e);
+			},
+            resolver.progress
         );
-
-        return deferred;
     }
 
     //
@@ -718,16 +738,19 @@ define('when',[],function() {
     // Boilerplate for AMD, Node, and browser global
 );
 
-/**
- * @license Copyright (c) 2010-2011 Brian Cavalier
- * LICENSE: see the LICENSE.txt file. If file is missing, this file is subject
- * to the MIT License at: http://www.opensource.org/licenses/mit-license.php.
- */
+/** @license MIT License (c) copyright B Cavalier & J Hann */
 
 /**
+ * wire/base plugin
  * Base wire plugin that provides properties, init, and destroy facets, and
  * a proxy for plain JS objects.
+ *
+ * wire is part of the cujo.js family of libraries (http://cujojs.com/)
+ *
+ * Licensed under the MIT License at:
+ * http://www.opensource.org/licenses/mit-license.php
  */
+
 (function(define) {
 define('wire/base',['when'], function(when) {
     var tos, createObject, whenAll, chain;
@@ -747,36 +770,28 @@ define('wire/base',['when'], function(when) {
 
 	createObject = Object.create || objectCreate;
 
-    function invoke(func, target, args, wire) {
-        var f;
-
-        f = target[func];
-
-        return typeof f == 'function'
-            ? when(wire(args),
-                function (resolvedArgs) {
-                    return f.apply(target, (tos.call(resolvedArgs) == '[object Array]')
-                        ? resolvedArgs
-                        : [resolvedArgs]);
-                })
-            : f;
+    function invoke(func, facet, args, wire) {
+        return when(wire(args),
+			function (resolvedArgs) {
+				return facet.invoke(func, (tos.call(resolvedArgs) == '[object Array]')
+					? resolvedArgs
+					: [resolvedArgs]);
+			}
+		);
     }
 
     function invokeAll(facet, wire) {
-		var target, options;
-
-		target  = facet.target;
-		options = facet.options;
+		var options = facet.options;
 
 		if(typeof options == 'string') {
-			return invoke(options, target, [], wire);
+			return invoke(options, facet, [], wire);
 
 		} else {
 			var promises, func;
 			promises = [];
 
 			for(func in options) {
-				promises.push(invoke(func, target, options[func], wire));
+				promises.push(invoke(func, facet, options[func], wire));
 			}
 
 			return whenAll(promises);
@@ -840,14 +855,17 @@ define('wire/base',['when'], function(when) {
 	}
 
 	function setProperty(proxy, name, val, wire) {
-        return when(wire(val, name, proxy.path),
+		var wired = wire(val, name, proxy.path);
+		when(wired,
             function(resolvedValue) {
 			    proxy.set(name, resolvedValue);
 		    }
         );
+
+		return wired;
 	}
 
-	function initFacet(resolver, facet, wire) {
+	function invokerFacet(resolver, facet, wire) {
 		chain(invokeAll(facet, wire), resolver);
 	}
 
@@ -892,14 +910,8 @@ define('wire/base',['when'], function(when) {
 			});
 
 			function destroyFacet(resolver, facet, wire) {
-				var target, options, w;
-
-				target = facet.target;
-				options = facet.options;
-				w = wire;
-
 				destroyFuncs.push(function destroyObject() {
-					return invokeAll({ options: options, target: target }, w);
+					return invokeAll(facet, wire);
 				});
 
                 // This resolver is just related to *collecting* the functions to
@@ -918,10 +930,15 @@ define('wire/base',['when'], function(when) {
 					properties: {
 						configure: propertiesFacet
 					},
-					// init facet.  Invokes methods on components after
-					// they have been configured
+					// init facet.  Invokes methods on components during
+					// the "init" stage.
 					init: {
-						initialize: initFacet
+						initialize: invokerFacet
+					},
+					// ready facet.  Invokes methods on components during
+					// the "ready" stage.
+					ready: {
+						ready: invokerFacet
 					},
 					// destroy facet.  Registers methods to be invoked
 					// on components when the enclosing context is destroyed
@@ -936,1099 +953,1161 @@ define('wire/base',['when'], function(when) {
 		}
 	};
 });
-})(typeof define != 'undefined'
+})(typeof define == 'function'
 	// use define for AMD if available
 	? define
-	// If no define or module, attach to current context.
-	: function(deps, factory) { this.wire_base = factory(this.when); }
+    : typeof module != 'undefined'
+        ? function(deps, factory) {
+            module.exports = factory.apply(this, deps.map(function(x) {
+				return require(x);
+			}));
+        }
+	    // If no define or module, attach to current context.
+	    : function(deps, factory) { this.wire_base = factory(this.when); }
 );
 
+/** @license MIT License (c) copyright B Cavalier & J Hann */
+
 /**
- * @license Copyright (c) 2010-2011 Brian Cavalier
- * LICENSE: see the LICENSE.txt file. If file is missing, this file is subject
- * to the MIT License at: http://www.opensource.org/licenses/mit-license.php.
+ * wire
+ * Javascript IOC Container
+ *
+ * wire is part of the cujo.js family of libraries (http://cujojs.com/)
+ *
+ * Licensed under the MIT License at:
+ * http://www.opensource.org/licenses/mit-license.php
+ *
+ * @version 0.8.0
  */
 
-//noinspection ThisExpressionReferencesGlobalObjectJS
-/**
- * wire.js IOC Container
- */
 (function(global, define){
-define('wire',['require', 'when', 'wire/base'], function(require, when, basePlugin) {
-
-    
-
-    var VERSION, tos, arrayProto, apIndexOf, apSlice, rootSpec, rootContext, delegate, emptyObject,
-        defer, chain, whenAll, isArray, indexOf, lifecycleSteps, undef;
-
-    wire.version = VERSION = "0.7.5";
-
-    rootSpec = global['wire'] || {};
-    lifecycleSteps = ['create', 'configure', 'initialize', 'ready'];
-
-    emptyObject = {};
-
-    tos = Object.prototype.toString;
-
-    arrayProto = Array.prototype;
-    apSlice = arrayProto.slice;
-    apIndexOf = arrayProto.indexOf;
-
-    // Polyfills
-
-    /**
-     * Object.create
-     */
-    delegate = Object.create || createObject;
-
-    /**
-     * Array.isArray
-     */
-    isArray = Array.isArray || function (it) {
-        return tos.call(it) == '[object Array]';
-    };
-
-    /**
-     * Array.prototype.indexOf
-     */
-    indexOf = apIndexOf
-            ? function (array, item) {
-                return apIndexOf.call(array, item);
-            }
-            : function (array, item) {
-                for (var i = 0, len = array.length; i < len; i++) {
-                    if (array[i] === item) return i;
-                }
-
-                return -1;
-            };
-
-    emptyObject = {};
-
-    // Local refs to when.js
-    defer = when.defer;
-    chain = when.chain;
-    whenAll = when.all;
-
-    /**
-     * Helper to always return a promise
-     * @param it anything
-     */
-    function promise(it) {
-        return when.isPromise(it) ? it : when(it);
-    }
-
-    /**
-     * Helper to reject a deferred when another is rejected
-     * @param resolver {Object} resolver to reject
-     */
-    function chainReject(resolver) {
-        return function (err) {
-            resolver.reject(err);
-        };
-    }
-
-    /**
-     * Creates an already-rejected Deferred using err as the rejection reason
-     * @param err anything - the rejection reason
-     */
-    function rejected(err) {
-        var d = defer();
-        d.reject(err);
-        return d.promise;
-    }
-
-    /**
-     * Abstract the platform's loader
-     * @param moduleId {String} moduleId to load
-     * @returns {Promise} a promise that resolves to the loaded module
-     */
-    function loadModule(moduleId) {
-        // TODO: Choose loadModule implementation based on platform
-        var deferred = defer();
-
-        require([moduleId], deferred.resolve);
-
-        return deferred.promise;
-    }
-
-    //
-    // AMD Module API
-    //
-
-    /**
-     * The top-level wire function that wires contexts as direct children
-     * of the (possibly implicit) root context.  It ensures that the root
-     * context has been wired before wiring children.
-     *
-     * @public
-     *
-     * @param spec {String|Array|*}
-     */
-    function wire(spec) {
-
-        // If the root context is not yet wired, wire it first
-        if (!rootContext) {
-            rootContext = wireContext(rootSpec);
-        }
-
-        // Use the rootContext to wire all new contexts.
-        return when(rootContext,
-            function (root) {
-                return root.wire(spec);
-            }
-        );
-    }
-
-    //
-    // AMD loader plugin API
-    //
-
-    //noinspection JSUnusedLocalSymbols
-    /**
-     * AMD Loader plugin API
-     * @param name {String} spec module id, or comma-separated list of module ids
-     * @param require unused
-     * @param callback {Function|Promise} callback to call or promise to resolve when wiring is completed
-     * @param config unused
-     */
-    function amdLoad(name, require, callback, config) {
-        var resolver = callback.resolve
-            ? callback
-            : {
-                resolve: callback,
-                reject: function (err) { throw err; }
-            };
-
-        // If it's a string, try to split on ',' since it could be a comma-separated
-        // list of spec module ids
-        chain(wire(name.split(',')), resolver);
-    }
-
-    wire.load = amdLoad;
-
-    //
-    // AMD Analyze/Build plugin API
-    //
-    // Separate builder plugin as per CommonJS LoaderPlugin spec:
-    // http://wiki.commonjs.org/wiki/Modules/LoaderPlugin
-
-    // plugin-builder: wire/cram/builder
-    // cram v 0.2+ supports plugin-builder property
-    wire['plugin-builder'] = 'wire/cram/builder';
-
-    //
-    // Private functions
-    //
-
-    /**
-     * Creates a new context from the supplied specs, with the supplied parent context.
-     * If specs is an {Array}, it may be a mixed array of string module ids, and object
-     * literal specs.  All spec module ids will be loaded, and then all specs will be
-     * merged from left-to-right (rightmost wins), and the resulting, merged spec will
-     * be wired.
-     *
-     * @private
-     *
-     * @param specs {String|Array|*}
-     * @param parent {Object} parent content
-     *
-     * @return {Promise} a promise for the new context
-     */
-    function wireContext(specs, parent) {
-        // Do the actual wiring after all specs have been loaded
-        function doWireContexts(spec) {
-            return when(createScope(spec, parent),
-                function (scope) {
-                    return scope.objects;
-                }
-            );
-        }
-
-        return when(ensureAllSpecsLoaded(isArray(specs) ? specs : [specs]), doWireContexts);
-    }
-    
-    /**
-     * Given a mixed array of strings and non-strings, returns a promise that will resolve
-     * to an array containing resolved modules by loading all the strings found in the
-     * specs array as module ids
-     * @private
-     *
-     * @param specs {Array} mixed array of strings and non-strings
-     *
-     * @returns {Promise} a promise that resolves to an array of resolved modules
-     */
-    function ensureAllSpecsLoaded(specs) {
-        return when.reduce(specs, function(merged, module) {
-            return isString(module)
-                ? when(loadModule(module), function(spec) { return mixinSpec(merged, spec); })
-                : mixinSpec(merged, module)
-        }, {});
-    }
-
-    /**
-     * Do the work of creating a new scope and fully wiring its contents
-     * @private
-     *
-     * @param scopeDef {Object} The spec (or portion of a spec) to be wired into a new scope
-     * @param parent {scope} scope to use as the parent, and thus from which to inherit
-     *  plugins, components, etc.
-     * @param [scopeName] {String} optional name for the new scope
-     *
-     * @return {Promise} a promise for the new scope
-     */
-    function createScope(scopeDef, parent, scopeName) {
-        var scope, scopeParent, local, proxied, objects,
-                pluginApi, resolvers, factories, facets, listeners, proxies,
-                modulesToLoad, moduleLoadPromises,
-                wireApi, modulesReady, scopeReady, scopeDestroyed,
-                contextPromise, doDestroy;
-
-        // Empty parent scope if none provided
-        parent = parent || {};
-
-        initFromParent(parent);
-        initPluginApi();
-
-        // TODO: Find a better way to load and scan the base plugin
-        scanPlugin(basePlugin);
-
-        contextPromise = initContextPromise(scopeDef, scopeReady);
-
-        initWireApi(objects);
-
-        createComponents(local, scopeDef);
-
-        // Once all modules are loaded, all the components can finish
-        ensureAllModulesLoaded();
-
-        // Setup overwritable doDestroy so that this context
-        // can only be destroyed once
-        doDestroy = function () {
-            // Retain a do-nothing doDestroy() func, in case
-            // it is called again for some reason.
-            doDestroy = function () {
-            };
-
-            return destroyContext();
-        };
-
-        // Return promise
-        // Context will be ready when this promise resolves
-        return scopeReady.promise;
-
-        //
-        // Initialization
-        //
-
-        function initFromParent(parent) {
-            local = {};
-
-            // Descend scope and plugins from parent so that this scope can
-            // use them directly via the prototype chain
-            objects = delegate(parent.objects || {});
-            resolvers = delegate(parent.resolvers || {});
-            factories = delegate(parent.factories || {});
-            facets = delegate(parent.facets || {});
-
-            // Set/override integral resolvers and factories
-            resolvers.wire   = wireResolver;
-
-            factories.module = moduleFactory;
-            factories.create = instanceFactory;
-            factories.wire   = wireFactory;
-            
-            listeners = delegateArray(parent.listeners);// ? [].concat(parent.listeners) : [];
-
-            // Proxies is an array, have to concat
-            proxies = delegateArray(parent.proxies);// ? [].concat(parent.proxies) : [];
-            proxied = [];
-
-            modulesToLoad = [];
-            moduleLoadPromises = {};
-            modulesReady = defer();
-
-            scopeReady = defer();
-            scopeDestroyed = defer();
-
-            // A proxy of this scope that can be used as a parent to
-            // any child scopes that may be created.
-            scopeParent = {
-                name: scopeName,
-                objects: objects,
-                destroyed: scopeDestroyed
-            };
-
-            // Full scope definition.  This will be given to sub-scopes,
-            // but should never be given to child contexts
-            scope = delegate(scopeParent);
-
-            scope.local = local;
-            scope.resolvers = resolvers;
-            scope.factories = factories;
-            scope.facets = facets;
-            scope.listeners = listeners;
-            scope.proxies = proxies;
-            scope.resolveRef = doResolveRef;
-            scope.destroy = destroy;
-            scope.path = createPath(scopeName, parent.path);
-
-            // When the parent begins its destroy phase, this child must
-            // begin its destroy phase and complete it before the parent.
-            // The context hierarchy will be destroyed from child to parent.
-            if (parent.destroyed) {
-                when(parent.destroyed, destroy);
-            }
-        }
-
-        function initWireApi(objects) {
-            wireApi = objects.wire = wireChild;
-            wireApi.destroy = objects.destroy = apiDestroy;
-
-            // Consider deprecating resolve
-            // Any reference you could resolve using this should simply be
-            // injected instead.
-            wireApi.resolve = objects.resolve = apiResolveRef;
-        }
-
-        function initPluginApi() {
-            // Plugin API
-            // wire() API that is passed to plugins.
-            pluginApi = function (spec, name, path) {
-                // FIXME: Why does returning when(item) here cause
-                // the resulting, returned promise never to resolve
-                // in wire-factory1.html?
-                return promise(createItem(spec, createPath(name, path)));
-            };
-
-            pluginApi.resolveRef = apiResolveRef;
-        }
-
-        function initContextPromise(scopeDef, scopeReady) {
-            var promises = [];
-
-            // Setup a promise for each item in this scope
-            for (var name in scopeDef) {
-                if (scopeDef.hasOwnProperty(name)) {
-                    promises.push(local[name] = objects[name] = defer());
-                }
-            }
-
-            // When all scope item promises are resolved, the scope
-            // is resolved.
-            // When this scope is ready, resolve the contextPromise
-            // with the objects that were created
-            return whenAll(promises,
-                function () {
-                    scopeReady.resolve(scope);
-                    return objects;
-                },
-                chainReject(scopeReady)
-            );
-        }
-
-        //
-        // Context Startup
-        //
-
-        function createComponents(names, scopeDef) {
-            // Process/create each item in scope and resolve its
-            // promise when completed.
-            for (var name in names) {
-                // No need to check hasOwnProperty since we know names
-                // only contains scopeDef's own prop names.
-                createScopeItem(name, scopeDef[name], objects[name]);
-            }
-        }
-
-        function ensureAllModulesLoaded() {
-            // Once all modules have been loaded, resolve modulesReady
-            whenAll(modulesToLoad, function (modules) {
-                modulesReady.resolve(modules);
-                moduleLoadPromises = modulesToLoad = null;
-            });
-        }
-
-        //
-        // Context Destroy
-        //
-
-        function destroyContext() {
-            var p, promises, pDeferred, i;
-
-            scopeDestroyed.resolve();
-
-            // TODO: Clear out the context prototypes?
-
-            promises = [];
-            for (i = 0; (p = proxied[i++]);) {
-                pDeferred = defer();
-                promises.push(pDeferred);
-                processListeners(pDeferred, 'destroy', p);
-            }
-
-            // *After* listeners are processed,
-            whenAll(promises, function () {
-                function deleteAll(container) {
-                    for(var p in container) delete container[p];
-                }
-                
-                deleteAll(local);
-                deleteAll(objects);
-                deleteAll(scope);
-
-                var p, i;
-
-                for (i = 0; (p = proxied[i++]);) {
-                    p.destroy();
-                }
-
-                // Free Objects
-                local = objects = scope = proxied = proxies = parent
-                        = resolvers = factories = facets = wireApi = undef;
-                // Free Arrays
-                listeners = undef;
-            });
-
-            return scopeDestroyed;
-        }
-
-        //
-        // Context API
-        //
-
-        // API of a wired context that is returned, via promise, to
-        // the caller.  It will also have properties for all the
-        // objects that were created in this scope.
-
-        /**
-         * Resolves a reference in the current context, using any reference resolvers
-         * available in the current context
-         *
-         * @param ref {String} reference name (may contain resolver prefix, e.g. "resolver!refname"
-         */
-        function apiResolveRef(ref) {
-            return when(doResolveRef(ref));
-        }
-
-        /**
-         * Destroys the current context
-         */
-        function apiDestroy() {
-            return destroy();
-        }
-
-        /**
-         * Wires a child spec with this context as its parent
-         * @param spec
-         */
-        function wireChild(spec) {
-            return wireContext(spec, scopeParent);
-        }
-
-        //
-        // Scope functions
-        //
-
-        function createPath(name, basePath) {
-            var path = basePath || scope.path;
-
-            return (path && name) ? (path + '.' + name) : name;
-        }
-
-        function createScopeItem(name, val, itemPromise) {
-            // NOTE: Order is important here.
-            // The object & local property assignment MUST happen before
-            // the chain resolves so that the concrete item is in place.
-            // Otherwise, the whole scope can be marked as resolved before
-            // the final item has been resolved.
-            var p = createItem(val, name);
-
-            return when(p, function (resolved) {
-                objects[name] = local[name] = resolved;
-                itemPromise.resolve(resolved);
-            }, chainReject(itemPromise));
-        }
-
-        function createItem(val, name) {
-            var created;
-
-            if (isRef(val)) {
-                // Reference
-                created = resolveRef(val, name);
-
-            } else if (isArray(val)) {
-                // Array
-                created = createArray(val, name);
-
-            } else if (isStrictlyObject(val)) {
-                // Module or nested scope
-                created = createModule(val, name);
-
-            } else {
-                // Plain value
-                created = val;
-            }
-
-            return created;
-        }
-
-        function getModule(moduleId, spec) {
-            var module, loadPromise;
-
-            if (isString(moduleId)) {
-                var m = moduleLoadPromises[moduleId];
-
-                if (!m) {
-                    modulesToLoad.push(moduleId);
-                    m = moduleLoadPromises[moduleId] = {
-                        id: moduleId,
-                        deferred: defer()
-                    };
-
-                    moduleLoadPromises[moduleId] = m;
-                    loadPromise = when(loadModule(moduleId), function (module) {
-                        scanPlugin(module, spec);
-                        chain(modulesReady, m.deferred, module);
-                    });
-
-                    modulesToLoad.push(loadPromise);
-                }
-
-                module = m.deferred;
-
-            } else {
-                module = moduleId;
-                scanPlugin(module);
-            }
-
-            return module;
-        }
-
-        function scanPlugin(module, spec) {
-            if (module && isFunction(module.wire$plugin)) {
-                var plugin = module.wire$plugin(contextPromise, scopeDestroyed.promise, spec);
-                if (plugin) {
-                    addPlugin(plugin.resolvers, resolvers);
-                    addPlugin(plugin.factories, factories);
-                    addPlugin(plugin.facets, facets);
-
-                    listeners.push(plugin);
-
-                    addProxies(plugin.proxies);
-                }
-            }
-        }
-
-        function addProxies(proxiesToAdd) {
-            if (!proxiesToAdd) return;
-
-            var newProxies, p, i = 0;
-
-            newProxies = [];
-            while (p = proxiesToAdd[i++]) {
-                if (indexOf(proxies, p) < 0) {
-                    newProxies.push(p)
-                }
-            }
-
-            scope.proxies = proxies = newProxies.concat(proxies);
-        }
-
-        function addPlugin(src, registry) {
-            for (var name in src) {
-                if (registry.hasOwnProperty(name)) {
-                    throw new Error("Two plugins for same type in scope: " + name);
-                }
-
-                registry[name] = src[name];
-            }
-        }
-
-        function createArray(arrayDef, name) {
-            // Minor optimization, if it's an empty array spec, just return
-            // an empty array.
-            return arrayDef.length
-                    ? when.map(arrayDef, function(item) {
-                        return createItem(item, name + '[]');
-                    })
-                    : [];
-        }
-
-        function createModule(spec, name) {
-
-            // Look for a factory, then use it to create the object
-            return when(findFactory(spec),
-                    function (factory) {
-                        var factoryPromise = defer();
-
-                        if (!spec.id) spec.id = name;
-
-                        factory(factoryPromise.resolver, spec, pluginApi);
-
-                        return processObject(factoryPromise, spec);
-                    },
-                    function () {
-                        // No factory found, treat object spec as a nested scope
-                        return when(createScope(spec, scope, name),
-                            function (created) {
-                                // Return *only* the objects, and none of the
-                                // other scope stuff (like plugins, promises etc)
-                                return created.local;
-                            },
-                            rejected
-                        );
-                    }
-            );
-        }
-
-        function findFactory(spec) {
-
-            // FIXME: Should not have to wait for all modules to load,
-            // but rather only the module containing the particular
-            // factory we need.  But how to know which factory before
-            // they are all loaded?
-            // Maybe need a special syntax for factories, something like:
-            // create: "factory!whatever-arg-the-factory-takes"
-            // args: [factory args here]
-
-            function getFactory() {
-                var f, factory;
-
-                for (f in factories) {
-                    if (spec.hasOwnProperty(f)) {
-                        factory = factories[f];
-                        break;
-                    }
-                }
-
-                // Intentionally returns undefined if no factory found
-                return factory;
-            }
-            
-            return getFactory() || when(modulesReady, function () {
-                return getFactory() || rejected(spec);
-            });
-        }
-
-        /**
-         * When the target component has been created, create its proxy,
-         * then push it through all its lifecycle stages.
-         *
-         * @private
-         *
-         * @param target the component being created, may be a promise
-         * @param spec the component's spec (the portion of the overall spec used to
-         *  create the target component)
-         *
-         * @returns {Promise} a promise for the fully wired component
-         */
-        function processObject(target, spec) {
-
-            return when(target,
-                function (object) {
-
-                    var proxy = createProxy(object, spec);
-                    proxied.push(proxy);
-
-                    // Push the object through the lifecycle steps, processing
-                    // facets at each step.
-                    return when.reduce(lifecycleSteps,
-                            function (object, step) {
-                                return processFacets(step, proxy);
-                            }, proxy);
-                }, rejected);
-        }
-
-        function createProxy(object, spec) {
-            var proxier, proxy, id, i;
-
-            i = 0;
-            id = spec.id;
-
-            while ((proxier = proxies[i++]) && !(proxy = proxier(object, spec))) {}
-
-            proxy.target = object;
-            proxy.spec = spec;
-            proxy.id = id;
-            proxy.path = createPath(id);
-
-            return proxy;
-        }
-
-        function processFacets(step, proxy) {
-            var promises, options, name, spec;
-            promises = [];
-            spec = proxy.spec;
-
-            for (name in facets) {
-                options = spec[name];
-                if (options) {
-                    processStep(promises, facets[name], step, proxy, options);
-                }
-            }
-
-            var d = defer();
-
-            whenAll(promises,
-                function () { processListeners(d, step, proxy); },
-                chainReject(d)
-            );
-
-            return d;
-        }
-
-        function processListeners(promise, step, proxy) {
-            var listenerPromises = [];
-            for (var i = 0; i < listeners.length; i++) {
-                processStep(listenerPromises, listeners[i], step, proxy);
-            }
-
-            // FIXME: Use only proxy here, caller should resolve target
-            return chain(whenAll(listenerPromises), promise, proxy.target);
-        }
-
-        function processStep(promises, processor, step, proxy, options) {
-            var facet, facetPromise;
-
-            if (processor && processor[step]) {
-                facetPromise = defer();
-                promises.push(facetPromise);
-
-                facet = delegate(proxy);
-                facet.options = options;
-                processor[step](facetPromise.resolver, facet, pluginApi);
-            }
-        }
-
-        //
-        // Built-in Factories
-        //
-
-        /**
-         * Factory that loads an AMD module
-         *
-         * @param resolver {Resolver} resolver to resolve with the created component
-         * @param spec {Object} portion of the spec for the component to be created
-         */
-        function moduleFactory(resolver, spec /*, wire */) {
-            chain(getModule(spec.module, spec), resolver);
-        }
-
-        /**
-         * Factory that uses an AMD module either directly, or as a
-         * constructor or plain function to create the resulting item.
-         *
-         * @param resolver {Resolver} resolver to resolve with the created component
-         * @param spec {Object} portion of the spec for the component to be created
-         */
-        function instanceFactory(resolver, spec /*, wire */) {
-            var fail, create, module, args, isConstructor, name;
-
-            fail = chainReject(resolver);
-            name = spec.id;
-
-            create = spec.create;
-            if (isStrictlyObject(create)) {
-                module = create.module;
-                args = create.args;
-                isConstructor = create.isConstructor;
-            } else {
-                module = create;
-            }
-
-            // Load the module, and use it to create the object
-            function handleModule(module) {
-                function resolve(resolvedArgs) {
-                    try {
-                        var instantiated = instantiate(module, resolvedArgs, isConstructor);
-                        resolver.resolve(instantiated);
-                    } catch (e) {
-                        resolver.reject(e);
-                    }
-                }
-
-                try {
-                    // We'll either use the module directly, or we need
-                    // to instantiate/invoke it.
-                    if (isFunction(module)) {
-                        // Instantiate or invoke it and use the result
-                        if (args) {
-                            args = isArray(args) ? args : [args];
-                            when(createArray(args, name), resolve, fail);
-
-                        } else {
-                            // No args, don't need to process them, so can directly
-                            // insantiate the module and resolve
-                            resolve([]);
-
-                        }
-
-                    } else {
-                        // Simply use the module as is
-                        resolver.resolve(module);
-
-                    }
-                } catch (e) {
-                    fail(e);
-                }
-            }
-
-            when(getModule(module, spec), handleModule, fail);
-        }
-
-        /**
-         * Factory that creates either a child context, or a *function* that will create
-         * that child context.  In the case that a child is created, this factory returns
-         * a promise that will resolve when the child has completed wiring.
-         *
-         * @param resolver {Resolver} resolver to resolve with the created component
-         * @param spec {Object} portion of the spec for the component to be created
-         */
-        function wireFactory(resolver, spec/*, wire, name*/) {
-            var options, module, defer;
-
-            options = spec.wire;
-
-            // Get child spec and options
-            if (isString(options)) {
-                module = options;
-            } else {
-                module = options.spec;
-                defer = options.defer;
-            }
-
-            function createChild(/** {Object|String}? */ mixin) {
-                var toWire = mixin ? [].concat(module, mixin) : module;
-                return wireChild(toWire);
-            }
-
-            if (defer) {
-                // Resolve with the createChild *function* itself
-                // which can be used later to wire the spec
-                resolver.resolve(createChild);
-            } else {
-                // Start wiring the child
-                var context = createChild();
-
-                // Resolve immediately with the child promise
-                resolver.resolve(context);
-            }
-        }
-
-        //
-        // Reference resolution
-        //
-
-        function resolveRef(ref, name) {
-            var refName = ref.$ref;
-
-            return doResolveRef(refName, ref, name == refName);
-        }
-
-        function doResolveRef(refName, refObj, excludeSelf) {
-            var promise, registry;
-
-            registry = excludeSelf ? parent.objects : objects;
-
-            if (refName in registry) {
-                promise = registry[refName];
-
-            } else {
-                var split;
-
-                promise = defer();
-                split = refName.indexOf('!');
-
-                if (split > 0) {
-                    var resolverName = refName.substring(0, split);
-                    refName = refName.substring(split + 1);
-                    // Wait for modules, since the reference may need to be
-                    // resolved by a resolver plugin
-                    when(modulesReady, function () {
-
-                        var resolver = resolvers[resolverName];
-                        if (resolver) {
-                            resolver(promise, refName, refObj, pluginApi);
-
-                        } else {
-                            promise.reject("No resolver found for ref: " + refName);
-
-                        }
-                    });
-
-                } else {
-                    promise.reject("Cannot resolve ref: " + refName);
-                }
-
-            }
-
-            return promise;
-        }
-
-        /**
-         * Builtin reference resolver that resolves to the context-specific
-         * wire function.
-         *
-         * @param resolver {Resolver} resolver to resolve
-         */
-        function wireResolver(resolver /*, name, refObj, wire*/) {
-            resolver.resolve(wireApi);
-        }
-
-        //
-        // Destroy
-        //
-
-        /**
-         * Destroy the current context.  Waits for the context to finish
-         * wiring and then immediately destroys it.
-         *
-         * @return {Promise} a promise that will resolve once the context
-         * has been destroyed
-         */
-        function destroy() {
-            return when(scopeReady, doDestroy, doDestroy);
-        }
-
-    } // createScope
-
-    /**
-     * Add components in from to those in to.  If duplicates are found, it
-     * is an error.
-     * @param to {Object} target object
-     * @param from {Object} source object
-     */
-    function mixinSpec(to, from) {
-        for (var name in from) {
-            if (from.hasOwnProperty(name) && !(name in emptyObject)) {
-                if (to.hasOwnProperty(name)) {
-                    throw new Error("Duplicate component name in sibling specs: " + name);
-                } else {
-                    to[name] = from[name];
-                }
-            }
-        }
-
-        return to;
-    }
-
-    function isRef(it) {
-        return it && it.$ref;
-    }
-
-    function isString(it) {
-        return typeof it == 'string';
-    }
-
-    function isStrictlyObject(it) {
-        // In IE7 tos.call(null) is '[object Object]'
-        // so we need to check to see if 'it' is
-        // even set
-        return (it && tos.call(it) == '[object Object]');
-    }
-
-    /**
-     * Standard function test
-     * @param it
-     */
-    function isFunction(it) {
-        return typeof it == 'function';
-    }
-
-    /**
-     * Creates a new {Array} with the same contents as array
-     * @param array {Array}
-     * @return {Array} a new {Array} with the same contents as array. If array is falsey,
-     *  returns a new empty {Array}
-     */
-    function delegateArray(array) {
-        return array ? [].concat(array) : [];
-    }
-
-    // In case Object.create isn't available
-    function T() {
-    }
-
-    /**
-     * Object.create shim
-     * @param prototype
-     */
-    function createObject(prototype) {
-        T.prototype = prototype;
-        return new T();
-    }
-
-    /**
-     * Constructor used to beget objects that wire needs to create using new.
-     * @param ctor {Function} real constructor to be invoked
-     * @param args {Array} arguments to be supplied to ctor
-     */
-    function Begetter(ctor, args) {
-        return ctor.apply(this, args);
-    }
-
-    /**
-     * Creates an object by either invoking ctor as a function and returning the result,
-     * or by calling new ctor().  It uses a simple heuristic to try to guess which approach
-     * is the "right" one.
-     *
-     * @param ctor {Function} function or constructor to invoke
-     * @param args {Array} array of arguments to pass to ctor in either case
-     *
-     * @returns The result of invoking ctor with args, with or without new, depending on
-     * the strategy selected.
-     */
-    function instantiate(ctor, args, forceConstructor) {
-
-        if (forceConstructor || isConstructor(ctor)) {
-            Begetter.prototype = ctor.prototype;
-            Begetter.prototype.constructor = ctor;
-            return new Begetter(ctor, args);
-        } else {
-            return ctor.apply(null, args);
-        }
-    }
-
-    /**
-     * Determines with the supplied function should be invoked directly or
-     * should be invoked using new in order to create the object to be wired.
-     *
-     * @param func {Function} determine whether this should be called using new or not
-     *
-     * @returns true iff func should be invoked using new, false otherwise.
-     */
-    function isConstructor(func) {
-        var is = false, p;
-        for (p in func.prototype) {
-            if (p !== undef) {
-                is = true;
-                break;
-            }
-        }
-
-        return is;
-    }
-
-    return wire;
+define('wire',['require', 'when', './base'], function(require, when, basePlugin) {
+
+	
+
+	var tos, arrayProto, apIndexOf, apSlice, rootSpec, rootContext, delegate, emptyObject,
+		defer, chain, whenAll, isArray, indexOf, lifecycleSteps, undef;
+
+	wire.version = "0.8.0";
+
+	rootSpec = global['wire'] || {};
+	lifecycleSteps = ['create', 'configure', 'initialize', 'connect', 'ready'];
+
+	emptyObject = {};
+
+	tos = Object.prototype.toString;
+
+	arrayProto = Array.prototype;
+	apSlice = arrayProto.slice;
+	apIndexOf = arrayProto.indexOf;
+
+	// Polyfills
+
+	/**
+	 * Object.create
+	 */
+	delegate = Object.create || createObject;
+
+	/**
+	 * Array.isArray
+	 */
+	isArray = Array.isArray || function (it) {
+		return tos.call(it) == '[object Array]';
+	};
+
+	/**
+	 * Array.prototype.indexOf
+	 */
+	indexOf = apIndexOf
+			? function (array, item) {
+				return apIndexOf.call(array, item);
+			}
+			: function (array, item) {
+				for (var i = 0, len = array.length; i < len; i++) {
+					if (array[i] === item) return i;
+				}
+
+				return -1;
+			};
+
+	emptyObject = {};
+
+	// Local refs to when.js
+	defer = when.defer;
+	chain = when.chain;
+	whenAll = when.all;
+
+	/**
+	 * Helper to reject a deferred when another is rejected
+	 * @param resolver {Object} resolver to reject
+	 */
+	function chainReject(resolver) {
+		return function (err) {
+			resolver.reject(err);
+		};
+	}
+
+	/**
+	 * Creates an already-rejected Deferred using err as the rejection reason
+	 * @param err anything - the rejection reason
+	 */
+	function rejected(err) {
+		var d = defer();
+		d.reject(err);
+		return d.promise;
+	}
+
+	/**
+	 * Abstract the platform's loader
+	 * @param moduleId {String} moduleId to load
+	 * @returns {Promise} a promise that resolves to the loaded module
+	 */
+	var loadModule = define.amd
+		? function(moduleId) {
+			// TODO: Choose loadModule implementation based on platform
+			var deferred = defer();
+
+			require([moduleId], deferred.resolve);
+
+			return deferred.promise;
+		}
+		: require;
+
+	//
+	// AMD Module API
+	//
+
+	/**
+	 * The top-level wire function that wires contexts as direct children
+	 * of the (possibly implicit) root context.  It ensures that the root
+	 * context has been wired before wiring children.
+	 *
+	 * @public
+	 *
+	 * @param spec {String|Array|*}
+	 */
+	function wire(spec) {
+
+		// If the root context is not yet wired, wire it first
+		if (!rootContext) {
+			rootContext = wireContext(rootSpec);
+		}
+
+		// Use the rootContext to wire all new contexts.
+		return when(rootContext,
+			function (root) {
+				return root.wire(spec);
+			}
+		);
+	}
+
+	//
+	// AMD loader plugin API
+	//
+
+	//noinspection JSUnusedLocalSymbols
+	/**
+	 * AMD Loader plugin API
+	 * @param name {String} spec module id, or comma-separated list of module ids
+	 * @param require unused
+	 * @param callback {Function|Promise} callback to call or promise to resolve when wiring is completed
+	 * @param config unused
+	 */
+	function amdLoad(name, require, callback, config) {
+		var resolver = callback.resolve
+			? callback
+			: {
+				resolve: callback,
+				reject: function (err) { throw err; }
+			};
+
+		// If it's a string, try to split on ',' since it could be a comma-separated
+		// list of spec module ids
+		chain(wire(name.split(',')), resolver);
+	}
+
+	wire.load = amdLoad;
+
+	//
+	// AMD Builder plugin API
+	//
+
+	// pluginBuilder: './build/amd/builder'
+	// cram > v0.2 will support pluginBuilder property
+	wire['pluginBuilder'] = './build/amd/builder';
+
+	//
+	// Private functions
+	//
+
+	/**
+	 * Creates a new context from the supplied specs, with the supplied parent context.
+	 * If specs is an {Array}, it may be a mixed array of string module ids, and object
+	 * literal specs.  All spec module ids will be loaded, and then all specs will be
+	 * merged from left-to-right (rightmost wins), and the resulting, merged spec will
+	 * be wired.
+	 *
+	 * @private
+	 *
+	 * @param specs {String|Array|*}
+	 * @param parent {Object} parent content
+	 *
+	 * @return {Promise} a promise for the new context
+	 */
+	function wireContext(specs, parent) {
+		// Do the actual wiring after all specs have been loaded
+		function doWireContexts(spec) {
+			return when(createScope(spec, parent),
+				function (scope) {
+					return scope.objects;
+				}
+			);
+		}
+
+		return when(ensureAllSpecsLoaded(isArray(specs) ? specs : [specs]), doWireContexts);
+	}
+
+	/**
+	 * Given a mixed array of strings and non-strings, returns a promise that will resolve
+	 * to an array containing resolved modules by loading all the strings found in the
+	 * specs array as module ids
+	 * @private
+	 *
+	 * @param specs {Array} mixed array of strings and non-strings
+	 *
+	 * @returns {Promise} a promise that resolves to an array of resolved modules
+	 */
+	function ensureAllSpecsLoaded(specs) {
+		return when.reduce(specs, function(merged, module) {
+			return isString(module)
+				? when(loadModule(module), function(spec) { return mixinSpec(merged, spec); })
+				: mixinSpec(merged, module)
+		}, {});
+	}
+
+	/**
+	 * Do the work of creating a new scope and fully wiring its contents
+	 * @private
+	 *
+	 * @param scopeDef {Object} The spec (or portion of a spec) to be wired into a new scope
+	 * @param parent {scope} scope to use as the parent, and thus from which to inherit
+	 *  plugins, components, etc.
+	 * @param [scopeName] {String} optional name for the new scope
+	 *
+	 * @return {Promise} a promise for the new scope
+	 */
+	function createScope(scopeDef, parent, scopeName) {
+		var scope, scopeParent, local, proxied, objects,
+				pluginApi, resolvers, factories, facets, listeners, proxies,
+				modulesToLoad, moduleLoadPromises,
+				wireApi, modulesReady, scopeReady, scopeDestroyed,
+				contextPromise, doDestroy;
+
+		// Empty parent scope if none provided
+		parent = parent || {};
+
+		initFromParent(parent);
+		initPluginApi();
+
+		// TODO: Find a better way to load and scan the base plugin
+		scanPlugin(basePlugin);
+
+		contextPromise = initContextPromise(scopeDef, scopeReady);
+
+		createComponents(local, scopeDef);
+
+		// Once all modules are loaded, all the components can finish
+		ensureAllModulesLoaded();
+
+		// Setup overwritable doDestroy so that this context
+		// can only be destroyed once
+		doDestroy = function () {
+			// Retain a do-nothing doDestroy() func, in case
+			// it is called again for some reason.
+			doDestroy = function () {
+			};
+
+			return destroyContext();
+		};
+
+		// Return promise
+		// Context will be ready when this promise resolves
+		return scopeReady.promise;
+
+		//
+		// Initialization
+		//
+
+		function initFromParent(parent) {
+			local = {};
+
+			// Descend scope and plugins from parent so that this scope can
+			// use them directly via the prototype chain
+			objects = initWireApi(delegate(parent.objects || {}));
+			resolvers = delegate(parent.resolvers || {});
+			factories = delegate(parent.factories || {});
+			facets = delegate(parent.facets || {});
+
+
+			// Set/override integral resolvers and factories
+			resolvers.wire   = wireResolver;
+
+			factories.module = moduleFactory;
+			factories.create = instanceFactory;
+			factories.wire   = wireFactory;
+
+			listeners = delegateArray(parent.listeners);// ? [].concat(parent.listeners) : [];
+
+			// Proxies is an array, have to concat
+			proxies = delegateArray(parent.proxies);// ? [].concat(parent.proxies) : [];
+			proxied = [];
+
+			modulesToLoad = [];
+			moduleLoadPromises = {};
+			modulesReady = defer();
+
+			scopeReady = defer();
+			scopeDestroyed = defer();
+
+			// A proxy of this scope that can be used as a parent to
+			// any child scopes that may be created.
+			scopeParent = {
+				name: scopeName,
+				objects: objects,
+				destroyed: scopeDestroyed
+			};
+
+			// Full scope definition.  This will be given to sub-scopes,
+			// but should never be given to child contexts
+			scope = delegate(scopeParent);
+
+			scope.local = local;
+			scope.resolvers = resolvers;
+			scope.factories = factories;
+			scope.facets = facets;
+			scope.listeners = listeners;
+			scope.proxies = proxies;
+			scope.resolveRef = doResolveRef;
+			scope.destroy = destroy;
+			scope.path = createPath(scopeName, parent.path);
+
+			// When the parent begins its destroy phase, this child must
+			// begin its destroy phase and complete it before the parent.
+			// The context hierarchy will be destroyed from child to parent.
+			if (parent.destroyed) {
+				when(parent.destroyed, destroy);
+			}
+		}
+
+		function initWireApi(objects) {
+			wireApi = objects.wire = wireChild;
+			wireApi.destroy = objects.destroy = apiDestroy;
+
+			// Consider deprecating resolve
+			// Any reference you could resolve using this should simply be
+			// injected instead.
+			wireApi.resolve = objects.resolve = apiResolveRef;
+
+			return delegate(objects);
+		}
+
+		function initPluginApi() {
+			// Plugin API
+			// wire() API that is passed to plugins.
+			pluginApi = function (spec, name, path) {
+				// Why the promise trickery here?
+				// Some factory deep in the promise chain (see wireFactory, for example)
+				// may need to actually return a promise *as the result of wiring*, and not
+				// have it be resolved in the chain.  So, it may return
+				var d = defer();
+				when(createItem(spec, createPath(name, path)), function(val) {
+					d.resolve(getResolvedValue(val));
+				}, d.reject);
+
+				return d.promise;
+			};
+
+			pluginApi.resolveRef = apiResolveRef;
+		}
+
+		function initContextPromise(scopeDef, scopeReady) {
+			var promises = [];
+
+			// Setup a promise for each item in this scope
+			for (var name in scopeDef) {
+				if (scopeDef.hasOwnProperty(name)) {
+					promises.push(local[name] = objects[name] = defer());
+				}
+			}
+
+			// When all scope item promises are resolved, the scope
+			// is resolved.
+			// When this scope is ready, resolve the contextPromise
+			// with the objects that were created
+			return chain(whenAll(promises), scopeReady, objects);
+		}
+
+		//
+		// Context Startup
+		//
+
+		function createComponents(names, scopeDef) {
+			// Process/create each item in scope and resolve its
+			// promise when completed.
+			for (var name in names) {
+				// No need to check hasOwnProperty since we know names
+				// only contains scopeDef's own prop names.
+				createScopeItem(name, scopeDef[name], objects[name]);
+			}
+		}
+
+		function ensureAllModulesLoaded() {
+			// Once all modules have been loaded, resolve modulesReady
+			whenAll(modulesToLoad, function (modules) {
+				modulesReady.resolve(modules);
+				moduleLoadPromises = modulesToLoad = null;
+			});
+		}
+
+		//
+		// Context Destroy
+		//
+
+		function destroyContext() {
+			var p, promises, pDeferred, i;
+
+			scopeDestroyed.resolve();
+
+			// TODO: Clear out the context prototypes?
+
+			promises = [];
+			for (i = 0; (p = proxied[i++]);) {
+				pDeferred = defer();
+				promises.push(pDeferred);
+				processListeners(pDeferred, 'destroy', p);
+			}
+
+			// *After* listeners are processed,
+			whenAll(promises, function () {
+				function deleteAll(container) {
+					for(var p in container) delete container[p];
+				}
+
+				deleteAll(local);
+				deleteAll(objects);
+				deleteAll(scope);
+
+				var p, i;
+
+				for (i = 0; (p = proxied[i++]);) {
+					p.destroy();
+				}
+
+				// Free Objects
+				local = objects = scope = proxied = proxies = parent
+						= resolvers = factories = facets
+						= wireApi = undef;
+
+				// Free Arrays
+				listeners = undef;
+			});
+
+			return scopeDestroyed;
+		}
+
+		//
+		// Context API
+		//
+
+		// API of a wired context that is returned, via promise, to
+		// the caller.  It will also have properties for all the
+		// objects that were created in this scope.
+
+		/**
+		 * Resolves a reference in the current context, using any reference resolvers
+		 * available in the current context
+		 *
+		 * @param ref {String} reference name (may contain resolver prefix, e.g. "resolver!refname"
+		 */
+		function apiResolveRef(ref) {
+			return when(doResolveRef(ref));
+		}
+
+		/**
+		 * Destroys the current context
+		 */
+		function apiDestroy() {
+			return destroy();
+		}
+
+		/**
+		 * Wires a child spec with this context as its parent
+		 * @param spec
+		 */
+		function wireChild(spec) {
+			return wireContext(spec, scopeParent);
+		}
+
+		//
+		// Scope functions
+		//
+
+		function createPath(name, basePath) {
+			var path = basePath || scope.path;
+
+			return (path && name) ? (path + '.' + name) : name;
+		}
+
+		function createScopeItem(name, val, itemPromise) {
+			// NOTE: Order is important here.
+			// The object & local property assignment MUST happen before
+			// the chain resolves so that the concrete item is in place.
+			// Otherwise, the whole scope can be marked as resolved before
+			// the final item has been resolved.
+			var p = createItem(val, name);
+
+			return when(p, function (resolved) {
+				resolved = getResolvedValue(resolved);
+				objects[name] = local[name] = resolved;
+				itemPromise.resolve(resolved);
+			}, chainReject(itemPromise));
+		}
+
+		function createItem(val, name) {
+			var created;
+
+			if (isRef(val)) {
+				// Reference
+				created = resolveRef(val, name);
+
+			} else if (isArray(val)) {
+				// Array
+				created = createArray(val, name);
+
+			} else if (isStrictlyObject(val)) {
+				// Module or nested scope
+				created = createModule(val, name);
+
+			} else {
+				// Plain value
+				created = val;
+			}
+
+			return created;
+		}
+
+		function getModule(moduleId, spec) {
+			var module, loadPromise;
+
+			if (isString(moduleId)) {
+				var m = moduleLoadPromises[moduleId];
+
+				if (!m) {
+					modulesToLoad.push(moduleId);
+					m = moduleLoadPromises[moduleId] = {
+						id: moduleId,
+						deferred: defer()
+					};
+
+					moduleLoadPromises[moduleId] = m;
+					loadPromise = when(loadModule(moduleId), function (module) {
+						scanPlugin(module, spec);
+						chain(modulesReady, m.deferred, module);
+					});
+
+					modulesToLoad.push(loadPromise);
+				}
+
+				module = m.deferred;
+
+			} else {
+				module = moduleId;
+				scanPlugin(module);
+			}
+
+			return module;
+		}
+
+		function scanPlugin(module, spec) {
+			if (module && isFunction(module.wire$plugin)) {
+				var plugin = module.wire$plugin(contextPromise, scopeDestroyed.promise, spec);
+				if (plugin) {
+					addPlugin(plugin.resolvers, resolvers);
+					addPlugin(plugin.factories, factories);
+					addPlugin(plugin.facets, facets);
+
+					listeners.push(plugin);
+
+					addProxies(plugin.proxies);
+				}
+			}
+		}
+
+		function addProxies(proxiesToAdd) {
+			if (!proxiesToAdd) return;
+
+			var newProxies, p, i = 0;
+
+			newProxies = [];
+			while (p = proxiesToAdd[i++]) {
+				if (indexOf(proxies, p) < 0) {
+					newProxies.push(p)
+				}
+			}
+
+			scope.proxies = proxies = newProxies.concat(proxies);
+		}
+
+		function addPlugin(src, registry) {
+			for (var name in src) {
+				if (registry.hasOwnProperty(name)) {
+					throw new Error("Two plugins for same type in scope: " + name);
+				}
+
+				registry[name] = src[name];
+			}
+		}
+
+		function createArray(arrayDef, name) {
+			// Minor optimization, if it's an empty array spec, just return
+			// an empty array.
+			return arrayDef.length
+					? when.map(arrayDef, function(item) {
+						return createItem(item, name + '[]');
+					})
+					: [];
+		}
+
+		function createModule(spec, name) {
+
+			// Look for a factory, then use it to create the object
+			return when(findFactory(spec),
+					function (factory) {
+						var factoryPromise = defer();
+
+						if (!spec.id) spec.id = name;
+
+						factory(factoryPromise.resolver, spec, pluginApi);
+
+						return processObject(factoryPromise, spec);
+					},
+					function () {
+						// No factory found, treat object spec as a nested scope
+						return when(createScope(spec, scope, name),
+							function (created) {
+								// Return *only* the objects, and none of the
+								// other scope stuff (like plugins, promises etc)
+								return created.local;
+							}
+						);
+					}
+			);
+		}
+
+		function findFactory(spec) {
+
+			// FIXME: Should not have to wait for all modules to load,
+			// but rather only the module containing the particular
+			// factory we need.  But how to know which factory before
+			// they are all loaded?
+			// Maybe need a special syntax for factories, something like:
+			// create: "factory!whatever-arg-the-factory-takes"
+			// args: [factory args here]
+
+			function getFactory() {
+				var f, factory;
+
+				for (f in factories) {
+					if (spec.hasOwnProperty(f)) {
+						factory = factories[f];
+						break;
+					}
+				}
+
+				// Intentionally returns undefined if no factory found
+				return factory;
+			}
+
+			return getFactory() || when(modulesReady, function () {
+				return getFactory() || rejected(spec);
+			});
+		}
+
+		/**
+		 * When the target component has been created, create its proxy,
+		 * then push it through all its lifecycle stages.
+		 *
+		 * @private
+		 *
+		 * @param target the component being created, may be a promise
+		 * @param spec the component's spec (the portion of the overall spec used to
+		 *  create the target component)
+		 *
+		 * @returns {Promise} a promise for the fully wired component
+		 */
+		function processObject(target, spec) {
+
+			return when(target,
+				function (object) {
+
+					var proxy = createProxy(object, spec);
+					proxied.push(proxy);
+
+					// Push the object through the lifecycle steps, processing
+					// facets at each step.
+					return when.reduce(lifecycleSteps,
+							function (object, step) {
+								return processFacets(step, proxy);
+							}, proxy);
+				}
+			);
+		}
+
+		function createProxy(object, spec) {
+			var proxier, proxy, id, i;
+
+			i = 0;
+			id = spec.id;
+
+			while ((proxier = proxies[i++]) && !(proxy = proxier(object, spec))) {}
+
+			proxy.target = object;
+			proxy.spec = spec;
+			proxy.id = id;
+			proxy.path = createPath(id);
+
+			return proxy;
+		}
+
+		function processFacets(step, proxy) {
+			var promises, options, name, spec;
+			promises = [];
+			spec = proxy.spec;
+
+			for (name in facets) {
+				options = spec[name];
+				if (options) {
+					processStep(promises, facets[name], step, proxy, options);
+				}
+			}
+
+			var d = defer();
+
+			whenAll(promises,
+				function () { processListeners(d, step, proxy); },
+				chainReject(d)
+			);
+
+			return d;
+		}
+
+		function processListeners(promise, step, proxy) {
+			var listenerPromises = [];
+			for (var i = 0; i < listeners.length; i++) {
+				processStep(listenerPromises, listeners[i], step, proxy);
+			}
+
+			// FIXME: Use only proxy here, caller should resolve target
+			return chain(whenAll(listenerPromises), promise, proxy.target);
+		}
+
+		function processStep(promises, processor, step, proxy, options) {
+			var facet, facetPromise;
+
+			if (processor && processor[step]) {
+				facetPromise = defer();
+				promises.push(facetPromise);
+
+				facet = delegate(proxy);
+				facet.options = options;
+				processor[step](facetPromise.resolver, facet, pluginApi);
+			}
+		}
+
+		//
+		// Built-in Factories
+		//
+
+		/**
+		 * Factory that loads an AMD module
+		 *
+		 * @param resolver {Resolver} resolver to resolve with the created component
+		 * @param spec {Object} portion of the spec for the component to be created
+		 */
+		function moduleFactory(resolver, spec /*, wire */) {
+			chain(getModule(spec.module, spec), resolver);
+		}
+
+		/**
+		 * Factory that uses an AMD module either directly, or as a
+		 * constructor or plain function to create the resulting item.
+		 *
+		 * @param resolver {Resolver} resolver to resolve with the created component
+		 * @param spec {Object} portion of the spec for the component to be created
+		 */
+		function instanceFactory(resolver, spec /*, wire */) {
+			var fail, create, module, args, isConstructor, name;
+
+			fail = chainReject(resolver);
+			name = spec.id;
+
+			create = spec.create;
+			if (isStrictlyObject(create)) {
+				module = create.module;
+				args = create.args;
+				isConstructor = create.isConstructor;
+			} else {
+				module = create;
+			}
+
+			// Load the module, and use it to create the object
+			function handleModule(module) {
+				function resolve(resolvedArgs) {
+					try {
+						var instantiated = instantiate(module, resolvedArgs, isConstructor);
+						resolver.resolve(instantiated);
+					} catch (e) {
+						resolver.reject(e);
+					}
+				}
+
+				try {
+					// We'll either use the module directly, or we need
+					// to instantiate/invoke it.
+					if (isFunction(module)) {
+						// Instantiate or invoke it and use the result
+						if (args) {
+							args = isArray(args) ? args : [args];
+							when(createArray(args, name), resolve, fail);
+
+						} else {
+							// No args, don't need to process them, so can directly
+							// insantiate the module and resolve
+							resolve([]);
+
+						}
+
+					} else {
+						// Simply use the module as is
+						resolver.resolve(module);
+
+					}
+				} catch (e) {
+					fail(e);
+				}
+			}
+
+			when(getModule(module, spec), handleModule, fail);
+		}
+
+		/**
+		 * Factory that creates either a child context, or a *function* that will create
+		 * that child context.  In the case that a child is created, this factory returns
+		 * a promise that will resolve when the child has completed wiring.
+		 *
+		 * @param resolver {Resolver} resolver to resolve with the created component
+		 * @param spec {Object} portion of the spec for the component to be created
+		 */
+		function wireFactory(resolver, spec/*, wire */) {
+			var options, module, get, defer, waitParent;
+
+			options = spec.wire;
+
+			// Get child spec and options
+			if (isString(options)) {
+				module = options;
+			} else {
+				module = options.spec;
+				waitParent = options.waitParent;
+				defer  = options.defer;
+				get    = options.get;
+			}
+
+			// Trying to use both get and defer is an error
+			if(defer && get) {
+				resolver.reject("you can't use defer and get at the same time");
+				return;
+			}
+
+			function createChild(/** {Object|String}? */ mixin) {
+				var spec = mixin ? [].concat(module, mixin) : module;
+				return wireChild(spec);
+			}
+
+			if (defer) {
+				// Resolve with the createChild *function* itself
+				// which can be used later to wire the spec
+				resolver.resolve(createChild);
+
+			} else if (get) {
+				// Wire a new scope, and get a named component from it to use
+				// as the component currently being wired.
+				when(loadModule(module), function(spec) {
+					return when(createItem(spec, get), function(scope) {
+						return doResolveRef(get, {}, scope);
+					});
+				}).then(resolver.resolve, resolver.reject);
+
+			} else if(waitParent) {
+
+				var childPromise = when(contextPromise, function() {
+					return createChild();
+				});
+
+				resolver.resolve(new PromiseKeeper(childPromise));
+
+			} else {
+				resolver.resolve(createChild());
+
+			}
+		}
+
+		//
+		// Reference resolution
+		//
+
+		function resolveRef(ref, name) {
+			var refName = ref.$ref;
+
+			return doResolveRef(refName, ref, name == refName ? parent.objects : objects);
+		}
+
+		function doResolveRef(refName, refObj, scope) {
+			var promise, deferred, split, resolverName;
+
+			scope = scope || objects;
+
+			if (refName in scope) {
+				promise = scope[refName];
+
+			} else {
+				deferred = defer();
+				split = refName.indexOf('!');
+
+				if (split > 0) {
+					resolverName = refName.substring(0, split);
+					refName = refName.substring(split + 1);
+					// Wait for modules, since the reference may need to be
+					// resolved by a resolver plugin
+					when(modulesReady, function () {
+
+						var resolver = resolvers[resolverName];
+
+						if (resolver) {
+							resolver(deferred.resolver, refName, refObj||{}, pluginApi);
+						} else {
+							deferred.reject("No resolver found for ref: " + refName);
+						}
+					});
+
+				} else {
+					deferred.reject("Cannot resolve ref: " + refName);
+				}
+
+				promise = deferred.promise;
+			}
+
+			return promise;
+		}
+
+		/**
+		 * Builtin reference resolver that resolves to the context-specific
+		 * wire function.
+		 *
+		 * @param resolver {Resolver} resolver to resolve
+		 */
+		function wireResolver(resolver /*, name, refObj, wire*/) {
+			resolver.resolve(wireApi);
+		}
+
+		//
+		// Destroy
+		//
+
+		/**
+		 * Destroy the current context.  Waits for the context to finish
+		 * wiring and then immediately destroys it.
+		 *
+		 * @return {Promise} a promise that will resolve once the context
+		 * has been destroyed
+		 */
+		function destroy() {
+			return when(scopeReady, doDestroy, doDestroy);
+		}
+
+	} // createScope
+
+	/**
+	 * Add components in from to those in to.  If duplicates are found, it
+	 * is an error.
+	 * @param to {Object} target object
+	 * @param from {Object} source object
+	 */
+	function mixinSpec(to, from) {
+		for (var name in from) {
+			if (from.hasOwnProperty(name) && !(name in emptyObject)) {
+				if (to.hasOwnProperty(name)) {
+					throw new Error("Duplicate component name in sibling specs: " + name);
+				} else {
+					to[name] = from[name];
+				}
+			}
+		}
+
+		return to;
+	}
+
+	function isRef(it) {
+		return it && it.hasOwnProperty('$ref');
+	}
+
+	function isString(it) {
+		return typeof it == 'string';
+	}
+
+	function isStrictlyObject(it) {
+		// In IE7 tos.call(null) is '[object Object]'
+		// so we need to check to see if 'it' is
+		// even set
+		return it && tos.call(it) == '[object Object]';
+	}
+
+	/**
+	 * Standard function test
+	 * @param it
+	 */
+	function isFunction(it) {
+		return typeof it == 'function';
+	}
+
+	/**
+	 * Creates a new {Array} with the same contents as array
+	 * @param array {Array}
+	 * @return {Array} a new {Array} with the same contents as array. If array is falsey,
+	 *  returns a new empty {Array}
+	 */
+	function delegateArray(array) {
+		return array ? [].concat(array) : [];
+	}
+
+	// In case Object.create isn't available
+	function T() {
+	}
+
+	/**
+	 * Object.create shim
+	 * @param prototype
+	 */
+	function createObject(prototype) {
+		var created;
+
+		T.prototype = prototype;
+		created = new T();
+		T.prototype = undef;
+
+		return created;
+	}
+
+	/**
+	 * Constructor used to beget objects that wire needs to create using new.
+	 * @param ctor {Function} real constructor to be invoked
+	 * @param args {Array} arguments to be supplied to ctor
+	 */
+	function Begetter(ctor, args) {
+		return ctor.apply(this, args);
+	}
+
+	/**
+	 * Creates an object by either invoking ctor as a function and returning the result,
+	 * or by calling new ctor().  It uses a simple heuristic to try to guess which approach
+	 * is the "right" one.
+	 *
+	 * @param ctor {Function} function or constructor to invoke
+	 * @param args {Array} array of arguments to pass to ctor in either case
+	 *
+	 * @returns The result of invoking ctor with args, with or without new, depending on
+	 * the strategy selected.
+	 */
+	function instantiate(ctor, args, forceConstructor) {
+
+		var begotten;
+
+		if (forceConstructor || isConstructor(ctor)) {
+			Begetter.prototype = ctor.prototype;
+			Begetter.prototype.constructor = ctor;
+			begotten = new Begetter(ctor, args);
+
+			Begetter.prototype = undef;
+
+		} else {
+			begotten = ctor.apply(null, args);
+
+		}
+
+		return begotten;
+	}
+
+	/**
+	 * Determines whether the supplied function should be invoked directly or
+	 * should be invoked using new in order to create the object to be wired.
+	 *
+	 * @param func {Function} determine whether this should be called using new or not
+	 *
+	 * @returns true iff func should be invoked using new, false otherwise.
+	 */
+	function isConstructor(func) {
+		var is = false, p;
+		for (p in func.prototype) {
+			if (p !== undef) {
+				is = true;
+				break;
+			}
+		}
+
+		return is;
+	}
+
+	/**
+	 * Special object to hold a Promise that should not be resolved, but
+	 * rather should be passed through a promise chain *as the resolution value*
+	 * @param val
+	 */
+	function PromiseKeeper(val) {
+		this.value = val;
+	}
+
+	/**
+	 * If it is a PromiseKeeper, return it.value, otherwise return it.  See
+	 * PromiseKeeper above for an explanation.
+	 * @param it anything
+	 */
+	function getResolvedValue(it) {
+		return it instanceof PromiseKeeper ? it.value : it;
+	}
+
+	return wire;
 });
 })(this,
-    typeof define == 'function'
-    // use define for AMD if available
-    ? define
-    // Browser
-    // If no define or module, attach to current context.
-    : function(deps, factory) {
-        this.wire = factory(
-            // Fake require()
-            function(modules, callback) { callback(modules); },
-            // dependencies
-            this.when, this.wire_base
-        );
-    }
-    // NOTE: Node not supported yet, coming soon
+	typeof define == 'function'
+	// use define for AMD if available
+	? define
+	// Browser
+	// If no define or module, attach to current context.
+	: typeof module != 'undefined'
+		? function(deps, factory) {
+			module.exports = factory.apply(this, [require].concat(deps.slice(1).map(function(x) {
+				return require(x);
+			})));
+		}
+		: function(deps, factory) {
+			this.wire = factory(
+				// Fake require()
+				function(modules, callback) { callback(modules); },
+				// dependencies
+				this.when, this.wire_base
+			);
+	}
 );
-
 (function(){
 
 // lib/handlebars/base.js
@@ -3612,7 +3691,7 @@ define('Handlebars',[],function(){
 
 })();
 
-//     Underscore.js 1.3.1
+//     Underscore.js 1.3.2
 //     (c) 2009-2012 Jeremy Ashkenas, DocumentCloud Inc.
 //     Underscore is freely distributable under the MIT license.
 //     Portions of Underscore are inspired or borrowed from Prototype,
@@ -3677,7 +3756,7 @@ define('Handlebars',[],function(){
   }
 
   // Current version.
-  _.VERSION = '1.3.1';
+  _.VERSION = '1.3.2';
 
   // Collection Functions
   // --------------------
@@ -3795,7 +3874,7 @@ define('Handlebars',[],function(){
     each(obj, function(value, index, list) {
       if (!(result = result && iterator.call(context, value, index, list))) return breaker;
     });
-    return result;
+    return !!result;
   };
 
   // Determine if at least one element in the object matches a truth test.
@@ -3839,7 +3918,7 @@ define('Handlebars',[],function(){
 
   // Return the maximum element or (element-based computation).
   _.max = function(obj, iterator, context) {
-    if (!iterator && _.isArray(obj)) return Math.max.apply(Math, obj);
+    if (!iterator && _.isArray(obj) && obj[0] === +obj[0]) return Math.max.apply(Math, obj);
     if (!iterator && _.isEmpty(obj)) return -Infinity;
     var result = {computed : -Infinity};
     each(obj, function(value, index, list) {
@@ -3851,7 +3930,7 @@ define('Handlebars',[],function(){
 
   // Return the minimum element (or element-based computation).
   _.min = function(obj, iterator, context) {
-    if (!iterator && _.isArray(obj)) return Math.min.apply(Math, obj);
+    if (!iterator && _.isArray(obj) && obj[0] === +obj[0]) return Math.min.apply(Math, obj);
     if (!iterator && _.isEmpty(obj)) return Infinity;
     var result = {computed : Infinity};
     each(obj, function(value, index, list) {
@@ -3865,19 +3944,16 @@ define('Handlebars',[],function(){
   _.shuffle = function(obj) {
     var shuffled = [], rand;
     each(obj, function(value, index, list) {
-      if (index == 0) {
-        shuffled[0] = value;
-      } else {
-        rand = Math.floor(Math.random() * (index + 1));
-        shuffled[index] = shuffled[rand];
-        shuffled[rand] = value;
-      }
+      rand = Math.floor(Math.random() * (index + 1));
+      shuffled[index] = shuffled[rand];
+      shuffled[rand] = value;
     });
     return shuffled;
   };
 
   // Sort the object's values by a criterion produced by an iterator.
-  _.sortBy = function(obj, iterator, context) {
+  _.sortBy = function(obj, val, context) {
+    var iterator = _.isFunction(val) ? val : function(obj) { return obj[val]; };
     return _.pluck(_.map(obj, function(value, index, list) {
       return {
         value : value,
@@ -3885,6 +3961,8 @@ define('Handlebars',[],function(){
       };
     }).sort(function(left, right) {
       var a = left.criteria, b = right.criteria;
+      if (a === void 0) return 1;
+      if (b === void 0) return -1;
       return a < b ? -1 : a > b ? 1 : 0;
     }), 'value');
   };
@@ -3914,26 +3992,26 @@ define('Handlebars',[],function(){
   };
 
   // Safely convert anything iterable into a real, live array.
-  _.toArray = function(iterable) {
-    if (!iterable)                return [];
-    if (iterable.toArray)         return iterable.toArray();
-    if (_.isArray(iterable))      return slice.call(iterable);
-    if (_.isArguments(iterable))  return slice.call(iterable);
-    return _.values(iterable);
+  _.toArray = function(obj) {
+    if (!obj)                                     return [];
+    if (_.isArray(obj))                           return slice.call(obj);
+    if (_.isArguments(obj))                       return slice.call(obj);
+    if (obj.toArray && _.isFunction(obj.toArray)) return obj.toArray();
+    return _.values(obj);
   };
 
   // Return the number of elements in an object.
   _.size = function(obj) {
-    return _.toArray(obj).length;
+    return _.isArray(obj) ? obj.length : _.keys(obj).length;
   };
 
   // Array Functions
   // ---------------
 
   // Get the first element of an array. Passing **n** will return the first N
-  // values in the array. Aliased as `head`. The **guard** check allows it to work
-  // with `_.map`.
-  _.first = _.head = function(array, n, guard) {
+  // values in the array. Aliased as `head` and `take`. The **guard** check
+  // allows it to work with `_.map`.
+  _.first = _.head = _.take = function(array, n, guard) {
     return (n != null) && !guard ? slice.call(array, 0, n) : array[0];
   };
 
@@ -3987,15 +4065,17 @@ define('Handlebars',[],function(){
   // Aliased as `unique`.
   _.uniq = _.unique = function(array, isSorted, iterator) {
     var initial = iterator ? _.map(array, iterator) : array;
-    var result = [];
-    _.reduce(initial, function(memo, el, i) {
-      if (0 == i || (isSorted === true ? _.last(memo) != el : !_.include(memo, el))) {
-        memo[memo.length] = el;
-        result[result.length] = array[i];
+    var results = [];
+    // The `isSorted` flag is irrelevant if the array only contains two elements.
+    if (array.length < 3) isSorted = true;
+    _.reduce(initial, function (memo, value, index) {
+      if (isSorted ? _.last(memo) !== value || !memo.length : !_.include(memo, value)) {
+        memo.push(value);
+        results.push(array[index]);
       }
       return memo;
     }, []);
-    return result;
+    return results;
   };
 
   // Produce an array that contains the union: each distinct element from all of
@@ -4018,7 +4098,7 @@ define('Handlebars',[],function(){
   // Take the difference between one array and a number of other arrays.
   // Only the elements present in just the first array will remain.
   _.difference = function(array) {
-    var rest = _.flatten(slice.call(arguments, 1));
+    var rest = _.flatten(slice.call(arguments, 1), true);
     return _.filter(array, function(value){ return !_.include(rest, value); });
   };
 
@@ -4129,7 +4209,7 @@ define('Handlebars',[],function(){
   // it with the arguments supplied.
   _.delay = function(func, wait) {
     var args = slice.call(arguments, 2);
-    return setTimeout(function(){ return func.apply(func, args); }, wait);
+    return setTimeout(function(){ return func.apply(null, args); }, wait);
   };
 
   // Defers a function, scheduling it to run after the current call stack has
@@ -4141,7 +4221,7 @@ define('Handlebars',[],function(){
   // Returns a function, that, when invoked, will only be triggered at most once
   // during a given window of time.
   _.throttle = function(func, wait) {
-    var context, args, timeout, throttling, more;
+    var context, args, timeout, throttling, more, result;
     var whenDone = _.debounce(function(){ more = throttling = false; }, wait);
     return function() {
       context = this; args = arguments;
@@ -4154,24 +4234,27 @@ define('Handlebars',[],function(){
       if (throttling) {
         more = true;
       } else {
-        func.apply(context, args);
+        result = func.apply(context, args);
       }
       whenDone();
       throttling = true;
+      return result;
     };
   };
 
   // Returns a function, that, as long as it continues to be invoked, will not
   // be triggered. The function will be called after it stops being called for
-  // N milliseconds.
-  _.debounce = function(func, wait) {
+  // N milliseconds. If `immediate` is passed, trigger the function on the
+  // leading edge, instead of the trailing.
+  _.debounce = function(func, wait, immediate) {
     var timeout;
     return function() {
       var context = this, args = arguments;
       var later = function() {
         timeout = null;
-        func.apply(context, args);
+        if (!immediate) func.apply(context, args);
       };
+      if (immediate && !timeout) func.apply(context, args);
       clearTimeout(timeout);
       timeout = setTimeout(later, wait);
     };
@@ -4254,6 +4337,15 @@ define('Handlebars',[],function(){
       }
     });
     return obj;
+  };
+
+  // Return a copy of the object only containing the whitelisted properties.
+  _.pick = function(obj) {
+    var result = {};
+    each(_.flatten(slice.call(arguments, 1)), function(key) {
+      if (key in obj) result[key] = obj[key];
+    });
+    return result;
   };
 
   // Fill in a given object with default properties.
@@ -4376,6 +4468,7 @@ define('Handlebars',[],function(){
   // Is a given array, string, or object empty?
   // An "empty" object has no enumerable own-properties.
   _.isEmpty = function(obj) {
+    if (obj == null) return true;
     if (_.isArray(obj) || _.isString(obj)) return obj.length === 0;
     for (var key in obj) if (_.has(obj, key)) return false;
     return true;
@@ -4420,6 +4513,11 @@ define('Handlebars',[],function(){
   // Is a given value a number?
   _.isNumber = function(obj) {
     return toString.call(obj) == '[object Number]';
+  };
+
+  // Is a given object a finite number?
+  _.isFinite = function(obj) {
+    return _.isNumber(obj) && isFinite(obj);
   };
 
   // Is the given value `NaN`?
@@ -4483,6 +4581,14 @@ define('Handlebars',[],function(){
     return (''+string).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;').replace(/\//g,'&#x2F;');
   };
 
+  // If the value of the named property is a function then invoke it;
+  // otherwise, return it.
+  _.result = function(object, property) {
+    if (object == null) return null;
+    var value = object[property];
+    return _.isFunction(value) ? value.call(object) : value;
+  };
+
   // Add your own custom functions to the Underscore object, ensuring that
   // they're correctly added to the OOP wrapper as well.
   _.mixin = function(obj) {
@@ -4512,39 +4618,72 @@ define('Handlebars',[],function(){
   // guaranteed not to match.
   var noMatch = /.^/;
 
+  // Certain characters need to be escaped so that they can be put into a
+  // string literal.
+  var escapes = {
+    '\\': '\\',
+    "'": "'",
+    'r': '\r',
+    'n': '\n',
+    't': '\t',
+    'u2028': '\u2028',
+    'u2029': '\u2029'
+  };
+
+  for (var p in escapes) escapes[escapes[p]] = p;
+  var escaper = /\\|'|\r|\n|\t|\u2028|\u2029/g;
+  var unescaper = /\\(\\|'|r|n|t|u2028|u2029)/g;
+
   // Within an interpolation, evaluation, or escaping, remove HTML escaping
   // that had been previously added.
   var unescape = function(code) {
-    return code.replace(/\\\\/g, '\\').replace(/\\'/g, "'");
+    return code.replace(unescaper, function(match, escape) {
+      return escapes[escape];
+    });
   };
 
   // JavaScript micro-templating, similar to John Resig's implementation.
   // Underscore templating handles arbitrary delimiters, preserves whitespace,
   // and correctly escapes quotes within interpolated code.
-  _.template = function(str, data) {
-    var c  = _.templateSettings;
-    var tmpl = 'var __p=[],print=function(){__p.push.apply(__p,arguments);};' +
-      'with(obj||{}){__p.push(\'' +
-      str.replace(/\\/g, '\\\\')
-         .replace(/'/g, "\\'")
-         .replace(c.escape || noMatch, function(match, code) {
-           return "',_.escape(" + unescape(code) + "),'";
-         })
-         .replace(c.interpolate || noMatch, function(match, code) {
-           return "'," + unescape(code) + ",'";
-         })
-         .replace(c.evaluate || noMatch, function(match, code) {
-           return "');" + unescape(code).replace(/[\r\n\t]/g, ' ') + ";__p.push('";
-         })
-         .replace(/\r/g, '\\r')
-         .replace(/\n/g, '\\n')
-         .replace(/\t/g, '\\t')
-         + "');}return __p.join('');";
-    var func = new Function('obj', '_', tmpl);
-    if (data) return func(data, _);
-    return function(data) {
-      return func.call(this, data, _);
+  _.template = function(text, data, settings) {
+    settings = _.extend(_.templateSettings, settings);
+
+    // Compile the template source, taking care to escape characters that
+    // cannot be included in a string literal and then unescape them in code
+    // blocks.
+    var source = "__p+='" + text
+      .replace(escaper, function(match) {
+        return '\\' + escapes[match];
+      })
+      .replace(settings.escape || noMatch, function(match, code) {
+        return "'+\n_.escape(" + unescape(code) + ")+\n'";
+      })
+      .replace(settings.interpolate || noMatch, function(match, code) {
+        return "'+\n(" + unescape(code) + ")+\n'";
+      })
+      .replace(settings.evaluate || noMatch, function(match, code) {
+        return "';\n" + unescape(code) + "\n;__p+='";
+      }) + "';\n";
+
+    // If a variable is not specified, place data values in local scope.
+    if (!settings.variable) source = 'with(obj||{}){\n' + source + '}\n';
+
+    source = "var __p='';" +
+      "var print=function(){__p+=Array.prototype.join.call(arguments, '')};\n" +
+      source + "return __p;\n";
+
+    var render = new Function(settings.variable || 'obj', '_', source);
+    if (data) return render(data, _);
+    var template = function(data) {
+      return render.call(this, data, _);
     };
+
+    // Provide the compiled function source as a convenience for build time
+    // precompilation.
+    template.source = 'function(' + (settings.variable || 'obj') + '){\n' +
+      source + '}';
+
+    return template;
   };
 
   // Add a "chain" function, which will delegate to the wrapper.
@@ -4620,6 +4759,8 @@ define('Handlebars',[],function(){
   }
 
 }).call(this);
+
+;
 /*
     http://www.JSON.org/json2.js
     2011-10-19
@@ -5106,7 +5247,7 @@ return t;
 /* END_TEMPLATE */
 ;
 /*!
- * jQuery JavaScript Library v1.7.1
+ * jQuery JavaScript Library v1.7.2
  * http://jquery.com/
  *
  * Copyright 2011, John Resig
@@ -5118,7 +5259,7 @@ return t;
  * Copyright 2011, The Dojo Foundation
  * Released under the MIT, BSD, and GPL Licenses.
  *
- * Date: Mon Nov 21 21:11:03 2011 -0500
+ * Date: Wed Mar 21 12:46:34 2012 -0700
  */
 (function( window, undefined ) {
 
@@ -5317,7 +5458,7 @@ jQuery.fn = jQuery.prototype = {
 	selector: "",
 
 	// The current version of jQuery being used
-	jquery: "1.7.1",
+	jquery: "1.7.2",
 
 	// The default length of a jQuery object is 0
 	length: 0,
@@ -5604,9 +5745,8 @@ jQuery.extend({
 		return jQuery.type(obj) === "array";
 	},
 
-	// A crude way of determining if an object is a window
 	isWindow: function( obj ) {
-		return obj && typeof obj === "object" && "setInterval" in obj;
+		return obj != null && obj == obj.window;
 	},
 
 	isNumeric: function( obj ) {
@@ -5686,6 +5826,9 @@ jQuery.extend({
 
 	// Cross-browser xml parsing
 	parseXML: function( data ) {
+		if ( typeof data !== "string" || !data ) {
+			return null;
+		}
 		var xml, tmp;
 		try {
 			if ( window.DOMParser ) { // Standard
@@ -5929,31 +6072,55 @@ jQuery.extend({
 
 	// Mutifunctional method to get and set values to a collection
 	// The value/s can optionally be executed if it's a function
-	access: function( elems, key, value, exec, fn, pass ) {
-		var length = elems.length;
+	access: function( elems, fn, key, value, chainable, emptyGet, pass ) {
+		var exec,
+			bulk = key == null,
+			i = 0,
+			length = elems.length;
 
-		// Setting many attributes
-		if ( typeof key === "object" ) {
-			for ( var k in key ) {
-				jQuery.access( elems, k, key[k], exec, fn, value );
+		// Sets many values
+		if ( key && typeof key === "object" ) {
+			for ( i in key ) {
+				jQuery.access( elems, fn, i, key[i], 1, emptyGet, value );
 			}
-			return elems;
-		}
+			chainable = 1;
 
-		// Setting one attribute
-		if ( value !== undefined ) {
+		// Sets one value
+		} else if ( value !== undefined ) {
 			// Optionally, function values get executed if exec is true
-			exec = !pass && exec && jQuery.isFunction(value);
+			exec = pass === undefined && jQuery.isFunction( value );
 
-			for ( var i = 0; i < length; i++ ) {
-				fn( elems[i], key, exec ? value.call( elems[i], i, fn( elems[i], key ) ) : value, pass );
+			if ( bulk ) {
+				// Bulk operations only iterate when executing function values
+				if ( exec ) {
+					exec = fn;
+					fn = function( elem, key, value ) {
+						return exec.call( jQuery( elem ), value );
+					};
+
+				// Otherwise they run against the entire set
+				} else {
+					fn.call( elems, value );
+					fn = null;
+				}
 			}
 
-			return elems;
+			if ( fn ) {
+				for (; i < length; i++ ) {
+					fn( elems[i], key, exec ? value.call( elems[i], i, fn( elems[i], key ) ) : value, pass );
+				}
+			}
+
+			chainable = 1;
 		}
 
-		// Getting an attribute
-		return length ? fn( elems[0], key ) : undefined;
+		return chainable ?
+			elems :
+
+			// Gets
+			bulk ?
+				fn.call( elems ) :
+				length ? fn( elems[0], key ) : emptyGet;
 	},
 
 	now: function() {
@@ -6112,6 +6279,8 @@ jQuery.Callbacks = function( flags ) {
 		stack = [],
 		// Last fire value (for non-forgettable lists)
 		memory,
+		// Flag to know if list was already fired
+		fired,
 		// Flag to know if list is currently firing
 		firing,
 		// First callback to fire (used internally by add and fireWith)
@@ -6145,6 +6314,7 @@ jQuery.Callbacks = function( flags ) {
 		fire = function( context, args ) {
 			args = args || [];
 			memory = !flags.memory || [ context, args ];
+			fired = true;
 			firing = true;
 			firingIndex = firingStart || 0;
 			firingStart = 0;
@@ -6280,7 +6450,7 @@ jQuery.Callbacks = function( flags ) {
 			},
 			// To know if the callbacks have already been called at least once
 			fired: function() {
-				return !!memory;
+				return !!fired;
 			}
 		};
 
@@ -6443,7 +6613,6 @@ jQuery.support = (function() {
 		select,
 		opt,
 		input,
-		marginDiv,
 		fragment,
 		tds,
 		events,
@@ -6526,8 +6695,12 @@ jQuery.support = (function() {
 		noCloneEvent: true,
 		inlineBlockNeedsLayout: false,
 		shrinkWrapBlocks: false,
-		reliableMarginRight: true
+		reliableMarginRight: true,
+		pixelMargin: true
 	};
+
+	// jQuery.boxModel DEPRECATED in 1.3, use jQuery.support.boxModel instead
+	jQuery.boxModel = support.boxModel = (document.compatMode === "CSS1Compat");
 
 	// Make sure checked status is properly cloned
 	input.checked = true;
@@ -6563,6 +6736,10 @@ jQuery.support = (function() {
 	support.radioValue = input.value === "t";
 
 	input.setAttribute("checked", "checked");
+
+	// #11217 - WebKit loses check when the name is after the checked attribute
+	input.setAttribute( "name", "t" );
+
 	div.appendChild( input );
 	fragment = document.createDocumentFragment();
 	fragment.appendChild( div.lastChild );
@@ -6577,23 +6754,6 @@ jQuery.support = (function() {
 	fragment.removeChild( input );
 	fragment.appendChild( div );
 
-	div.innerHTML = "";
-
-	// Check if div with explicit width and no margin-right incorrectly
-	// gets computed margin-right based on width of container. For more
-	// info see bug #3333
-	// Fails in WebKit before Feb 2011 nightlies
-	// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
-	if ( window.getComputedStyle ) {
-		marginDiv = document.createElement( "div" );
-		marginDiv.style.width = "0";
-		marginDiv.style.marginRight = "0";
-		div.style.width = "2px";
-		div.appendChild( marginDiv );
-		support.reliableMarginRight =
-			( parseInt( ( window.getComputedStyle( marginDiv, null ) || { marginRight: 0 } ).marginRight, 10 ) || 0 ) === 0;
-	}
-
 	// Technique from Juriy Zaytsev
 	// http://perfectionkills.com/detecting-event-support-without-browser-sniffing/
 	// We only care about the case where non-standard event systems
@@ -6601,7 +6761,7 @@ jQuery.support = (function() {
 	// avoid an eval call (in setAttribute) which can cause CSP
 	// to go haywire. See: https://developer.mozilla.org/en/Security/CSP
 	if ( div.attachEvent ) {
-		for( i in {
+		for ( i in {
 			submit: 1,
 			change: 1,
 			focusin: 1
@@ -6619,12 +6779,13 @@ jQuery.support = (function() {
 	fragment.removeChild( div );
 
 	// Null elements to avoid leaks in IE
-	fragment = select = opt = marginDiv = div = input = null;
+	fragment = select = opt = div = input = null;
 
 	// Run tests that need a body at doc ready
 	jQuery(function() {
 		var container, outer, inner, table, td, offsetSupport,
-			conMarginTop, ptlm, vb, style, html,
+			marginDiv, conMarginTop, style, html, positionTopLeftWidthHeight,
+			paddingMarginBorderVisibility, paddingMarginBorder,
 			body = document.getElementsByTagName("body")[0];
 
 		if ( !body ) {
@@ -6633,15 +6794,16 @@ jQuery.support = (function() {
 		}
 
 		conMarginTop = 1;
-		ptlm = "position:absolute;top:0;left:0;width:1px;height:1px;margin:0;";
-		vb = "visibility:hidden;border:0;";
-		style = "style='" + ptlm + "border:5px solid #000;padding:0;'";
-		html = "<div " + style + "><div></div></div>" +
-			"<table " + style + " cellpadding='0' cellspacing='0'>" +
+		paddingMarginBorder = "padding:0;margin:0;border:";
+		positionTopLeftWidthHeight = "position:absolute;top:0;left:0;width:1px;height:1px;";
+		paddingMarginBorderVisibility = paddingMarginBorder + "0;visibility:hidden;";
+		style = "style='" + positionTopLeftWidthHeight + paddingMarginBorder + "5px solid #000;";
+		html = "<div " + style + "display:block;'><div style='" + paddingMarginBorder + "0;display:block;overflow:hidden;'></div></div>" +
+			"<table " + style + "' cellpadding='0' cellspacing='0'>" +
 			"<tr><td></td></tr></table>";
 
 		container = document.createElement("div");
-		container.style.cssText = vb + "width:0;height:0;position:static;top:0;margin-top:" + conMarginTop + "px";
+		container.style.cssText = paddingMarginBorderVisibility + "width:0;height:0;position:static;top:0;margin-top:" + conMarginTop + "px";
 		body.insertBefore( container, body.firstChild );
 
 		// Construct the test element
@@ -6655,7 +6817,7 @@ jQuery.support = (function() {
 		// display:none (it is still safe to use offsets if a parent element is
 		// hidden; don safety goggles and see bug #4512 for more information).
 		// (only IE 8 fails this test)
-		div.innerHTML = "<table><tr><td style='padding:0;border:0;display:none'></td><td>t</td></tr></table>";
+		div.innerHTML = "<table><tr><td style='" + paddingMarginBorder + "0;display:none'></td><td>t</td></tr></table>";
 		tds = div.getElementsByTagName( "td" );
 		isSupported = ( tds[ 0 ].offsetHeight === 0 );
 
@@ -6666,28 +6828,44 @@ jQuery.support = (function() {
 		// (IE <= 8 fail this test)
 		support.reliableHiddenOffsets = isSupported && ( tds[ 0 ].offsetHeight === 0 );
 
-		// Figure out if the W3C box model works as expected
-		div.innerHTML = "";
-		div.style.width = div.style.paddingLeft = "1px";
-		jQuery.boxModel = support.boxModel = div.offsetWidth === 2;
+		// Check if div with explicit width and no margin-right incorrectly
+		// gets computed margin-right based on width of container. For more
+		// info see bug #3333
+		// Fails in WebKit before Feb 2011 nightlies
+		// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
+		if ( window.getComputedStyle ) {
+			div.innerHTML = "";
+			marginDiv = document.createElement( "div" );
+			marginDiv.style.width = "0";
+			marginDiv.style.marginRight = "0";
+			div.style.width = "2px";
+			div.appendChild( marginDiv );
+			support.reliableMarginRight =
+				( parseInt( ( window.getComputedStyle( marginDiv, null ) || { marginRight: 0 } ).marginRight, 10 ) || 0 ) === 0;
+		}
 
 		if ( typeof div.style.zoom !== "undefined" ) {
 			// Check if natively block-level elements act like inline-block
 			// elements when setting their display to 'inline' and giving
 			// them layout
 			// (IE < 8 does this)
+			div.innerHTML = "";
+			div.style.width = div.style.padding = "1px";
+			div.style.border = 0;
+			div.style.overflow = "hidden";
 			div.style.display = "inline";
 			div.style.zoom = 1;
-			support.inlineBlockNeedsLayout = ( div.offsetWidth === 2 );
+			support.inlineBlockNeedsLayout = ( div.offsetWidth === 3 );
 
 			// Check if elements with layout shrink-wrap their children
 			// (IE 6 does this)
-			div.style.display = "";
-			div.innerHTML = "<div style='width:4px;'></div>";
-			support.shrinkWrapBlocks = ( div.offsetWidth !== 2 );
+			div.style.display = "block";
+			div.style.overflow = "visible";
+			div.innerHTML = "<div style='width:5px;'></div>";
+			support.shrinkWrapBlocks = ( div.offsetWidth !== 3 );
 		}
 
-		div.style.cssText = ptlm + vb;
+		div.style.cssText = positionTopLeftWidthHeight + paddingMarginBorderVisibility;
 		div.innerHTML = html;
 
 		outer = div.firstChild;
@@ -6712,8 +6890,17 @@ jQuery.support = (function() {
 		offsetSupport.subtractsBorderForOverflowNotVisible = ( inner.offsetTop === -5 );
 		offsetSupport.doesNotIncludeMarginInBodyOffset = ( body.offsetTop !== conMarginTop );
 
+		if ( window.getComputedStyle ) {
+			div.style.marginTop = "1%";
+			support.pixelMargin = ( window.getComputedStyle( div, null ) || { marginTop: 0 } ).marginTop !== "1%";
+		}
+
+		if ( typeof container.style.zoom !== "undefined" ) {
+			container.style.zoom = 1;
+		}
+
 		body.removeChild( container );
-		div  = container = null;
+		marginDiv = div = container = null;
 
 		jQuery.extend( support, offsetSupport );
 	});
@@ -6970,62 +7157,70 @@ jQuery.extend({
 
 jQuery.fn.extend({
 	data: function( key, value ) {
-		var parts, attr, name,
+		var parts, part, attr, name, l,
+			elem = this[0],
+			i = 0,
 			data = null;
 
-		if ( typeof key === "undefined" ) {
+		// Gets all values
+		if ( key === undefined ) {
 			if ( this.length ) {
-				data = jQuery.data( this[0] );
+				data = jQuery.data( elem );
 
-				if ( this[0].nodeType === 1 && !jQuery._data( this[0], "parsedAttrs" ) ) {
-					attr = this[0].attributes;
-					for ( var i = 0, l = attr.length; i < l; i++ ) {
+				if ( elem.nodeType === 1 && !jQuery._data( elem, "parsedAttrs" ) ) {
+					attr = elem.attributes;
+					for ( l = attr.length; i < l; i++ ) {
 						name = attr[i].name;
 
 						if ( name.indexOf( "data-" ) === 0 ) {
 							name = jQuery.camelCase( name.substring(5) );
 
-							dataAttr( this[0], name, data[ name ] );
+							dataAttr( elem, name, data[ name ] );
 						}
 					}
-					jQuery._data( this[0], "parsedAttrs", true );
+					jQuery._data( elem, "parsedAttrs", true );
 				}
 			}
 
 			return data;
+		}
 
-		} else if ( typeof key === "object" ) {
+		// Sets multiple values
+		if ( typeof key === "object" ) {
 			return this.each(function() {
 				jQuery.data( this, key );
 			});
 		}
 
-		parts = key.split(".");
+		parts = key.split( ".", 2 );
 		parts[1] = parts[1] ? "." + parts[1] : "";
+		part = parts[1] + "!";
 
-		if ( value === undefined ) {
-			data = this.triggerHandler("getData" + parts[1] + "!", [parts[0]]);
+		return jQuery.access( this, function( value ) {
 
-			// Try to fetch any internally stored data first
-			if ( data === undefined && this.length ) {
-				data = jQuery.data( this[0], key );
-				data = dataAttr( this[0], key, data );
+			if ( value === undefined ) {
+				data = this.triggerHandler( "getData" + part, [ parts[0] ] );
+
+				// Try to fetch any internally stored data first
+				if ( data === undefined && elem ) {
+					data = jQuery.data( elem, key );
+					data = dataAttr( elem, key, data );
+				}
+
+				return data === undefined && parts[1] ?
+					this.data( parts[0] ) :
+					data;
 			}
 
-			return data === undefined && parts[1] ?
-				this.data( parts[0] ) :
-				data;
+			parts[1] = value;
+			this.each(function() {
+				var self = jQuery( this );
 
-		} else {
-			return this.each(function() {
-				var self = jQuery( this ),
-					args = [ parts[0], value ];
-
-				self.triggerHandler( "setData" + parts[1] + "!", args );
+				self.triggerHandler( "setData" + part, parts );
 				jQuery.data( this, key, value );
-				self.triggerHandler( "changeData" + parts[1] + "!", args );
+				self.triggerHandler( "changeData" + part, parts );
 			});
-		}
+		}, null, value, arguments.length > 1, null, false );
 	},
 
 	removeData: function( key ) {
@@ -7049,7 +7244,7 @@ function dataAttr( elem, key, data ) {
 				data = data === "true" ? true :
 				data === "false" ? false :
 				data === "null" ? null :
-				jQuery.isNumeric( data ) ? parseFloat( data ) :
+				jQuery.isNumeric( data ) ? +data :
 					rbrace.test( data ) ? jQuery.parseJSON( data ) :
 					data;
 			} catch( e ) {}
@@ -7184,21 +7379,27 @@ jQuery.extend({
 
 jQuery.fn.extend({
 	queue: function( type, data ) {
+		var setter = 2;
+
 		if ( typeof type !== "string" ) {
 			data = type;
 			type = "fx";
+			setter--;
 		}
 
-		if ( data === undefined ) {
+		if ( arguments.length < setter ) {
 			return jQuery.queue( this[0], type );
 		}
-		return this.each(function() {
-			var queue = jQuery.queue( this, type, data );
 
-			if ( type === "fx" && queue[0] !== "inprogress" ) {
-				jQuery.dequeue( this, type );
-			}
-		});
+		return data === undefined ?
+			this :
+			this.each(function() {
+				var queue = jQuery.queue( this, type, data );
+
+				if ( type === "fx" && queue[0] !== "inprogress" ) {
+					jQuery.dequeue( this, type );
+				}
+			});
 	},
 	dequeue: function( type ) {
 		return this.each(function() {
@@ -7252,7 +7453,7 @@ jQuery.fn.extend({
 			}
 		}
 		resolve();
-		return defer.promise();
+		return defer.promise( object );
 	}
 });
 
@@ -7271,7 +7472,7 @@ var rclass = /[\n\t\r]/g,
 
 jQuery.fn.extend({
 	attr: function( name, value ) {
-		return jQuery.access( this, name, value, true, jQuery.attr );
+		return jQuery.access( this, jQuery.attr, name, value, arguments.length > 1 );
 	},
 
 	removeAttr: function( name ) {
@@ -7281,7 +7482,7 @@ jQuery.fn.extend({
 	},
 
 	prop: function( name, value ) {
-		return jQuery.access( this, name, value, true, jQuery.prop );
+		return jQuery.access( this, jQuery.prop, name, value, arguments.length > 1 );
 	},
 
 	removeProp: function( name ) {
@@ -7421,7 +7622,7 @@ jQuery.fn.extend({
 
 		if ( !arguments.length ) {
 			if ( elem ) {
-				hooks = jQuery.valHooks[ elem.nodeName.toLowerCase() ] || jQuery.valHooks[ elem.type ];
+				hooks = jQuery.valHooks[ elem.type ] || jQuery.valHooks[ elem.nodeName.toLowerCase() ];
 
 				if ( hooks && "get" in hooks && (ret = hooks.get( elem, "value" )) !== undefined ) {
 					return ret;
@@ -7465,7 +7666,7 @@ jQuery.fn.extend({
 				});
 			}
 
-			hooks = jQuery.valHooks[ this.nodeName.toLowerCase() ] || jQuery.valHooks[ this.type ];
+			hooks = jQuery.valHooks[ this.type ] || jQuery.valHooks[ this.nodeName.toLowerCase() ];
 
 			// If set returns undefined, fall back to normal setting
 			if ( !hooks || !("set" in hooks) || hooks.set( this, val, "value" ) === undefined ) {
@@ -7611,7 +7812,7 @@ jQuery.extend({
 	},
 
 	removeAttr: function( elem, value ) {
-		var propName, attrNames, name, l,
+		var propName, attrNames, name, l, isBool,
 			i = 0;
 
 		if ( value && elem.nodeType === 1 ) {
@@ -7623,13 +7824,17 @@ jQuery.extend({
 
 				if ( name ) {
 					propName = jQuery.propFix[ name ] || name;
+					isBool = rboolean.test( name );
 
 					// See #9699 for explanation of this approach (setting first, then removal)
-					jQuery.attr( elem, name, "" );
+					// Do not do this for boolean attributes (see #10870)
+					if ( !isBool ) {
+						jQuery.attr( elem, name, "" );
+					}
 					elem.removeAttribute( getSetAttribute ? name : propName );
 
 					// Set corresponding property to false for boolean attributes
-					if ( rboolean.test( name ) && propName in elem ) {
+					if ( isBool && propName in elem ) {
 						elem[ propName ] = false;
 					}
 				}
@@ -7783,7 +7988,8 @@ if ( !getSetAttribute ) {
 
 	fixSpecified = {
 		name: true,
-		id: true
+		id: true,
+		coords: true
 	};
 
 	// Use this for any attribute in IE6/7
@@ -7913,7 +8119,7 @@ jQuery.each([ "radio", "checkbox" ], function() {
 
 var rformElems = /^(?:textarea|input|select)$/i,
 	rtypenamespace = /^([^\.]*)?(?:\.(.+))?$/,
-	rhoverHack = /\bhover(\.\S+)?\b/,
+	rhoverHack = /(?:^|\s)hover(\.\S+)?\b/,
 	rkeyEvent = /^key/,
 	rmouseEvent = /^(?:mouse|contextmenu)|click/,
 	rfocusMorph = /^(?:focusinfocus|focusoutblur)$/,
@@ -7961,6 +8167,7 @@ jQuery.event = {
 		if ( handler.handler ) {
 			handleObjIn = handler;
 			handler = handleObjIn.handler;
+			selector = handleObjIn.selector;
 		}
 
 		// Make sure that the handler has a unique ID, used to find/remove it later
@@ -8012,7 +8219,7 @@ jQuery.event = {
 				handler: handler,
 				guid: handler.guid,
 				selector: selector,
-				quick: quickParse( selector ),
+				quick: selector && quickParse( selector ),
 				namespace: namespaces.join(".")
 			}, handleObjIn );
 
@@ -8301,6 +8508,7 @@ jQuery.event = {
 			delegateCount = handlers.delegateCount,
 			args = [].slice.call( arguments, 0 ),
 			run_all = !event.exclusive && !event.namespace,
+			special = jQuery.event.special[ event.type ] || {},
 			handlerQueue = [],
 			i, j, cur, jqcur, ret, selMatch, matched, matches, handleObj, sel, related;
 
@@ -8308,33 +8516,42 @@ jQuery.event = {
 		args[0] = event;
 		event.delegateTarget = this;
 
+		// Call the preDispatch hook for the mapped type, and let it bail if desired
+		if ( special.preDispatch && special.preDispatch.call( this, event ) === false ) {
+			return;
+		}
+
 		// Determine handlers that should run if there are delegated events
-		// Avoid disabled elements in IE (#6911) and non-left-click bubbling in Firefox (#3861)
-		if ( delegateCount && !event.target.disabled && !(event.button && event.type === "click") ) {
+		// Avoid non-left-click bubbling in Firefox (#3861)
+		if ( delegateCount && !(event.button && event.type === "click") ) {
 
 			// Pregenerate a single jQuery object for reuse with .is()
 			jqcur = jQuery(this);
 			jqcur.context = this.ownerDocument || this;
 
 			for ( cur = event.target; cur != this; cur = cur.parentNode || this ) {
-				selMatch = {};
-				matches = [];
-				jqcur[0] = cur;
-				for ( i = 0; i < delegateCount; i++ ) {
-					handleObj = handlers[ i ];
-					sel = handleObj.selector;
 
-					if ( selMatch[ sel ] === undefined ) {
-						selMatch[ sel ] = (
-							handleObj.quick ? quickIs( cur, handleObj.quick ) : jqcur.is( sel )
-						);
+				// Don't process events on disabled elements (#6911, #8165)
+				if ( cur.disabled !== true ) {
+					selMatch = {};
+					matches = [];
+					jqcur[0] = cur;
+					for ( i = 0; i < delegateCount; i++ ) {
+						handleObj = handlers[ i ];
+						sel = handleObj.selector;
+
+						if ( selMatch[ sel ] === undefined ) {
+							selMatch[ sel ] = (
+								handleObj.quick ? quickIs( cur, handleObj.quick ) : jqcur.is( sel )
+							);
+						}
+						if ( selMatch[ sel ] ) {
+							matches.push( handleObj );
+						}
 					}
-					if ( selMatch[ sel ] ) {
-						matches.push( handleObj );
+					if ( matches.length ) {
+						handlerQueue.push({ elem: cur, matches: matches });
 					}
-				}
-				if ( matches.length ) {
-					handlerQueue.push({ elem: cur, matches: matches });
 				}
 			}
 		}
@@ -8371,6 +8588,11 @@ jQuery.event = {
 					}
 				}
 			}
+		}
+
+		// Call the postDispatch hook for the mapped type
+		if ( special.postDispatch ) {
+			special.postDispatch.call( this, event );
 		}
 
 		return event.result;
@@ -8664,15 +8886,22 @@ if ( !jQuery.support.submitBubbles ) {
 					form = jQuery.nodeName( elem, "input" ) || jQuery.nodeName( elem, "button" ) ? elem.form : undefined;
 				if ( form && !form._submit_attached ) {
 					jQuery.event.add( form, "submit._submit", function( event ) {
-						// If form was submitted by the user, bubble the event up the tree
-						if ( this.parentNode && !event.isTrigger ) {
-							jQuery.event.simulate( "submit", this.parentNode, event, true );
-						}
+						event._submit_bubble = true;
 					});
 					form._submit_attached = true;
 				}
 			});
 			// return undefined since we don't need an event listener
+		},
+		
+		postDispatch: function( event ) {
+			// If form was submitted by the user, bubble the event up the tree
+			if ( event._submit_bubble ) {
+				delete event._submit_bubble;
+				if ( this.parentNode && !event.isTrigger ) {
+					jQuery.event.simulate( "submit", this.parentNode, event, true );
+				}
+			}
 		},
 
 		teardown: function() {
@@ -8778,9 +9007,9 @@ jQuery.fn.extend({
 		// Types can be a map of types/handlers
 		if ( typeof types === "object" ) {
 			// ( types-Object, selector, data )
-			if ( typeof selector !== "string" ) {
+			if ( typeof selector !== "string" ) { // && selector != null
 				// ( types-Object, data )
-				data = selector;
+				data = data || selector;
 				selector = undefined;
 			}
 			for ( type in types ) {
@@ -8826,14 +9055,14 @@ jQuery.fn.extend({
 		});
 	},
 	one: function( types, selector, data, fn ) {
-		return this.on.call( this, types, selector, data, fn, 1 );
+		return this.on( types, selector, data, fn, 1 );
 	},
 	off: function( types, selector, fn ) {
 		if ( types && types.preventDefault && types.handleObj ) {
 			// ( event )  dispatched jQuery.Event
 			var handleObj = types.handleObj;
 			jQuery( types.delegateTarget ).off(
-				handleObj.namespace? handleObj.type + "." + handleObj.namespace : handleObj.type,
+				handleObj.namespace ? handleObj.origType + "." + handleObj.namespace : handleObj.origType,
 				handleObj.selector,
 				handleObj.handler
 			);
@@ -8992,7 +9221,7 @@ var Sizzle = function( selector, context, results, seed ) {
 	if ( context.nodeType !== 1 && context.nodeType !== 9 ) {
 		return [];
 	}
-	
+
 	if ( !selector || typeof selector !== "string" ) {
 		return results;
 	}
@@ -9002,7 +9231,7 @@ var Sizzle = function( selector, context, results, seed ) {
 		contextXML = Sizzle.isXML( context ),
 		parts = [],
 		soFar = selector;
-	
+
 	// Reset the position of the chunker regexp (start from head)
 	do {
 		chunker.exec( "" );
@@ -9010,9 +9239,9 @@ var Sizzle = function( selector, context, results, seed ) {
 
 		if ( m ) {
 			soFar = m[3];
-		
+
 			parts.push( m[1] );
-		
+
 			if ( m[2] ) {
 				extra = m[3];
 				break;
@@ -9036,7 +9265,7 @@ var Sizzle = function( selector, context, results, seed ) {
 				if ( Expr.relative[ selector ] ) {
 					selector += parts.shift();
 				}
-				
+
 				set = posProcess( selector, set, seed );
 			}
 		}
@@ -9164,7 +9393,7 @@ Sizzle.find = function( expr, context, isXML ) {
 
 	for ( i = 0, len = Expr.order.length; i < len; i++ ) {
 		type = Expr.order[i];
-		
+
 		if ( (match = Expr.leftMatch[ type ].exec( expr )) ) {
 			left = match[1];
 			match.splice( 1, 1 );
@@ -9296,7 +9525,7 @@ var getText = Sizzle.getText = function( elem ) {
 		ret = "";
 
 	if ( nodeType ) {
-		if ( nodeType === 1 || nodeType === 9 ) {
+		if ( nodeType === 1 || nodeType === 9 || nodeType === 11 ) {
 			// Use textContent || innerText for elements
 			if ( typeof elem.textContent === 'string' ) {
 				return elem.textContent;
@@ -9536,7 +9765,7 @@ var Expr = Sizzle.selectors = {
 
 		ATTR: function( match, curLoop, inplace, result, not, isXML ) {
 			var name = match[1] = match[1].replace( rBackslash, "" );
-			
+
 			if ( !isXML && Expr.attrMap[name] ) {
 				match[1] = Expr.attrMap[name];
 			}
@@ -9570,7 +9799,7 @@ var Expr = Sizzle.selectors = {
 			} else if ( Expr.match.POS.test( match[0] ) || Expr.match.CHILD.test( match[0] ) ) {
 				return true;
 			}
-			
+
 			return match;
 		},
 
@@ -9580,7 +9809,7 @@ var Expr = Sizzle.selectors = {
 			return match;
 		}
 	},
-	
+
 	filters: {
 		enabled: function( elem ) {
 			return elem.disabled === false && elem.type !== "hidden";
@@ -9593,14 +9822,14 @@ var Expr = Sizzle.selectors = {
 		checked: function( elem ) {
 			return elem.checked === true;
 		},
-		
+
 		selected: function( elem ) {
 			// Accessing this property makes selected-by-default
 			// options in Safari work properly
 			if ( elem.parentNode ) {
 				elem.parentNode.selectedIndex;
 			}
-			
+
 			return elem.selected === true;
 		},
 
@@ -9622,7 +9851,7 @@ var Expr = Sizzle.selectors = {
 
 		text: function( elem ) {
 			var attr = elem.getAttribute( "type" ), type = elem.type;
-			// IE6 and 7 will map elem.type to 'text' for new HTML5 types (search, etc) 
+			// IE6 and 7 will map elem.type to 'text' for new HTML5 types (search, etc)
 			// use getAttribute instead to test this case
 			return elem.nodeName.toLowerCase() === "input" && "text" === type && ( attr === type || attr === null );
 		},
@@ -9740,22 +9969,23 @@ var Expr = Sizzle.selectors = {
 			switch ( type ) {
 				case "only":
 				case "first":
-					while ( (node = node.previousSibling) )	 {
-						if ( node.nodeType === 1 ) { 
-							return false; 
+					while ( (node = node.previousSibling) ) {
+						if ( node.nodeType === 1 ) {
+							return false;
 						}
 					}
 
-					if ( type === "first" ) { 
-						return true; 
+					if ( type === "first" ) {
+						return true;
 					}
 
 					node = elem;
 
+					/* falls through */
 				case "last":
-					while ( (node = node.nextSibling) )	 {
-						if ( node.nodeType === 1 ) { 
-							return false; 
+					while ( (node = node.nextSibling) ) {
+						if ( node.nodeType === 1 ) {
+							return false;
 						}
 					}
 
@@ -9768,22 +9998,22 @@ var Expr = Sizzle.selectors = {
 					if ( first === 1 && last === 0 ) {
 						return true;
 					}
-					
+
 					doneName = match[0];
 					parent = elem.parentNode;
-	
+
 					if ( parent && (parent[ expando ] !== doneName || !elem.nodeIndex) ) {
 						count = 0;
-						
+
 						for ( node = parent.firstChild; node; node = node.nextSibling ) {
 							if ( node.nodeType === 1 ) {
 								node.nodeIndex = ++count;
 							}
-						} 
+						}
 
 						parent[ expando ] = doneName;
 					}
-					
+
 					diff = elem.nodeIndex - last;
 
 					if ( first === 0 ) {
@@ -9802,7 +10032,7 @@ var Expr = Sizzle.selectors = {
 		TAG: function( elem, match ) {
 			return (match === "*" && elem.nodeType === 1) || !!elem.nodeName && elem.nodeName.toLowerCase() === match;
 		},
-		
+
 		CLASS: function( elem, match ) {
 			return (" " + (elem.className || elem.getAttribute("class")) + " ")
 				.indexOf( match ) > -1;
@@ -9864,6 +10094,9 @@ for ( var type in Expr.match ) {
 	Expr.match[ type ] = new RegExp( Expr.match[ type ].source + (/(?![^\[]*\])(?![^\(]*\))/.source) );
 	Expr.leftMatch[ type ] = new RegExp( /(^(?:.|\r|\n)*?)/.source + Expr.match[ type ].source.replace(/\\(\d+)/g, fescape) );
 }
+// Expose origPOS
+// "global" as in regardless of relation to brackets/parens
+Expr.match.globalPOS = origPOS;
 
 var makeArray = function( array, results ) {
 	array = Array.prototype.slice.call( array, 0 );
@@ -9872,7 +10105,7 @@ var makeArray = function( array, results ) {
 		results.push.apply( results, array );
 		return results;
 	}
-	
+
 	return array;
 };
 
@@ -10104,7 +10337,7 @@ if ( document.querySelectorAll ) {
 		if ( div.querySelectorAll && div.querySelectorAll(".TEST").length === 0 ) {
 			return;
 		}
-	
+
 		Sizzle = function( query, context, extra, seed ) {
 			context = context || document;
 
@@ -10113,24 +10346,24 @@ if ( document.querySelectorAll ) {
 			if ( !seed && !Sizzle.isXML(context) ) {
 				// See if we find a selector to speed up
 				var match = /^(\w+$)|^\.([\w\-]+$)|^#([\w\-]+$)/.exec( query );
-				
+
 				if ( match && (context.nodeType === 1 || context.nodeType === 9) ) {
 					// Speed-up: Sizzle("TAG")
 					if ( match[1] ) {
 						return makeArray( context.getElementsByTagName( query ), extra );
-					
+
 					// Speed-up: Sizzle(".CLASS")
 					} else if ( match[2] && Expr.find.CLASS && context.getElementsByClassName ) {
 						return makeArray( context.getElementsByClassName( match[2] ), extra );
 					}
 				}
-				
+
 				if ( context.nodeType === 9 ) {
 					// Speed-up: Sizzle("body")
 					// The body element only exists once, optimize finding it
 					if ( query === "body" && context.body ) {
 						return makeArray( [ context.body ], extra );
-						
+
 					// Speed-up: Sizzle("#ID")
 					} else if ( match && match[3] ) {
 						var elem = context.getElementById( match[3] );
@@ -10143,12 +10376,12 @@ if ( document.querySelectorAll ) {
 							if ( elem.id === match[3] ) {
 								return makeArray( [ elem ], extra );
 							}
-							
+
 						} else {
 							return makeArray( [], extra );
 						}
 					}
-					
+
 					try {
 						return makeArray( context.querySelectorAll(query), extra );
 					} catch(qsaError) {}
@@ -10186,7 +10419,7 @@ if ( document.querySelectorAll ) {
 					}
 				}
 			}
-		
+
 			return oldSizzle(query, context, extra, seed);
 		};
 
@@ -10213,7 +10446,7 @@ if ( document.querySelectorAll ) {
 			// This should fail with an exception
 			// Gecko does not error, returns false instead
 			matches.call( document.documentElement, "[test!='']:sizzle" );
-	
+
 		} catch( pseudoError ) {
 			pseudoWorks = true;
 		}
@@ -10223,7 +10456,7 @@ if ( document.querySelectorAll ) {
 			expr = expr.replace(/\=\s*([^'"\]]*)\s*\]/g, "='$1']");
 
 			if ( !Sizzle.isXML( node ) ) {
-				try { 
+				try {
 					if ( pseudoWorks || !Expr.match.PSEUDO.test( expr ) && !/!=/.test( expr ) ) {
 						var ret = matches.call( node, expr );
 
@@ -10260,7 +10493,7 @@ if ( document.querySelectorAll ) {
 	if ( div.getElementsByClassName("e").length === 1 ) {
 		return;
 	}
-	
+
 	Expr.order.splice(1, 0, "CLASS");
 	Expr.find.CLASS = function( match, context, isXML ) {
 		if ( typeof context.getElementsByClassName !== "undefined" && !isXML ) {
@@ -10311,7 +10544,7 @@ function dirCheck( dir, cur, doneName, checkSet, nodeCheck, isXML ) {
 
 		if ( elem ) {
 			var match = false;
-			
+
 			elem = elem[dir];
 
 			while ( elem ) {
@@ -10364,7 +10597,7 @@ if ( document.documentElement.contains ) {
 
 Sizzle.isXML = function( elem ) {
 	// documentElement is verified for cases where it doesn't yet exist
-	// (such as loading iframes in IE - #4833) 
+	// (such as loading iframes in IE - #4833)
 	var documentElement = (elem ? elem.ownerDocument || elem : 0).documentElement;
 
 	return documentElement ? documentElement.nodeName !== "HTML" : false;
@@ -10414,7 +10647,7 @@ var runtil = /Until$/,
 	rmultiselector = /,/,
 	isSimple = /^.[^:#\[\.,]*$/,
 	slice = Array.prototype.slice,
-	POS = jQuery.expr.match.POS,
+	POS = jQuery.expr.match.globalPOS,
 	// methods guaranteed to produce a unique set when starting from a unique set
 	guaranteedUnique = {
 		children: true,
@@ -10481,11 +10714,11 @@ jQuery.fn.extend({
 	},
 
 	is: function( selector ) {
-		return !!selector && ( 
+		return !!selector && (
 			typeof selector === "string" ?
 				// If this is a positional selector, check membership in the returned set
 				// so $("p:first").is("p:last") won't return true for a doc with two "p".
-				POS.test( selector ) ? 
+				POS.test( selector ) ?
 					jQuery( selector, this.context ).index( this[0] ) >= 0 :
 					jQuery.filter( selector, this ).length > 0 :
 				this.filter( selector ).length > 0 );
@@ -10493,7 +10726,7 @@ jQuery.fn.extend({
 
 	closest: function( selectors, context ) {
 		var ret = [], i, l, cur = this[0];
-		
+
 		// Array (deprecated as of jQuery 1.7)
 		if ( jQuery.isArray( selectors ) ) {
 			var level = 1;
@@ -10612,7 +10845,7 @@ jQuery.each({
 		return jQuery.dir( elem, "previousSibling", until );
 	},
 	siblings: function( elem ) {
-		return jQuery.sibling( elem.parentNode.firstChild, elem );
+		return jQuery.sibling( ( elem.parentNode || {} ).firstChild, elem );
 	},
 	children: function( elem ) {
 		return jQuery.sibling( elem.firstChild );
@@ -10746,7 +10979,7 @@ function createSafeFragment( document ) {
 	return safeFrag;
 }
 
-var nodeNames = "abbr|article|aside|audio|canvas|datalist|details|figcaption|figure|footer|" +
+var nodeNames = "abbr|article|aside|audio|bdi|canvas|data|datalist|details|figcaption|figure|footer|" +
 		"header|hgroup|mark|meter|nav|output|progress|section|summary|time|video",
 	rinlinejQuery = / jQuery\d+="(?:\d+|null)"/g,
 	rleadingWhitespace = /^\s+/,
@@ -10756,7 +10989,7 @@ var nodeNames = "abbr|article|aside|audio|canvas|datalist|details|figcaption|fig
 	rhtml = /<|&#?\w+;/,
 	rnoInnerhtml = /<(?:script|style)/i,
 	rnocache = /<(?:script|object|embed|option|style)/i,
-	rnoshimcache = new RegExp("<(?:" + nodeNames + ")", "i"),
+	rnoshimcache = new RegExp("<(?:" + nodeNames + ")[\\s/>]", "i"),
 	// checked="checked" or checked
 	rchecked = /checked\s*(?:[^=]|=\s*.checked.)/i,
 	rscriptType = /\/(java|ecma)script/i,
@@ -10783,20 +11016,12 @@ if ( !jQuery.support.htmlSerialize ) {
 }
 
 jQuery.fn.extend({
-	text: function( text ) {
-		if ( jQuery.isFunction(text) ) {
-			return this.each(function(i) {
-				var self = jQuery( this );
-
-				self.text( text.call(this, i, self.text()) );
-			});
-		}
-
-		if ( typeof text !== "object" && text !== undefined ) {
-			return this.empty().append( (this[0] && this[0].ownerDocument || document).createTextNode( text ) );
-		}
-
-		return jQuery.text( this );
+	text: function( value ) {
+		return jQuery.access( this, function( value ) {
+			return value === undefined ?
+				jQuery.text( this ) :
+				this.empty().append( ( this[0] && this[0].ownerDocument || document ).createTextNode( value ) );
+		}, null, value, arguments.length );
 	},
 
 	wrapAll: function( html ) {
@@ -10948,44 +11173,44 @@ jQuery.fn.extend({
 	},
 
 	html: function( value ) {
-		if ( value === undefined ) {
-			return this[0] && this[0].nodeType === 1 ?
-				this[0].innerHTML.replace(rinlinejQuery, "") :
-				null;
+		return jQuery.access( this, function( value ) {
+			var elem = this[0] || {},
+				i = 0,
+				l = this.length;
 
-		// See if we can take a shortcut and just use innerHTML
-		} else if ( typeof value === "string" && !rnoInnerhtml.test( value ) &&
-			(jQuery.support.leadingWhitespace || !rleadingWhitespace.test( value )) &&
-			!wrapMap[ (rtagName.exec( value ) || ["", ""])[1].toLowerCase() ] ) {
-
-			value = value.replace(rxhtmlTag, "<$1></$2>");
-
-			try {
-				for ( var i = 0, l = this.length; i < l; i++ ) {
-					// Remove element nodes and prevent memory leaks
-					if ( this[i].nodeType === 1 ) {
-						jQuery.cleanData( this[i].getElementsByTagName("*") );
-						this[i].innerHTML = value;
-					}
-				}
-
-			// If using innerHTML throws an exception, use the fallback method
-			} catch(e) {
-				this.empty().append( value );
+			if ( value === undefined ) {
+				return elem.nodeType === 1 ?
+					elem.innerHTML.replace( rinlinejQuery, "" ) :
+					null;
 			}
 
-		} else if ( jQuery.isFunction( value ) ) {
-			this.each(function(i){
-				var self = jQuery( this );
 
-				self.html( value.call(this, i, self.html()) );
-			});
+			if ( typeof value === "string" && !rnoInnerhtml.test( value ) &&
+				( jQuery.support.leadingWhitespace || !rleadingWhitespace.test( value ) ) &&
+				!wrapMap[ ( rtagName.exec( value ) || ["", ""] )[1].toLowerCase() ] ) {
 
-		} else {
-			this.empty().append( value );
-		}
+				value = value.replace( rxhtmlTag, "<$1></$2>" );
 
-		return this;
+				try {
+					for (; i < l; i++ ) {
+						// Remove element nodes and prevent memory leaks
+						elem = this[i] || {};
+						if ( elem.nodeType === 1 ) {
+							jQuery.cleanData( elem.getElementsByTagName( "*" ) );
+							elem.innerHTML = value;
+						}
+					}
+
+					elem = 0;
+
+				// If using innerHTML throws an exception, use the fallback method
+				} catch(e) {}
+			}
+
+			if ( elem ) {
+				this.empty().append( value );
+			}
+		}, null, value, arguments.length );
 	},
 
 	replaceWith: function( value ) {
@@ -11088,7 +11313,23 @@ jQuery.fn.extend({
 			}
 
 			if ( scripts.length ) {
-				jQuery.each( scripts, evalScript );
+				jQuery.each( scripts, function( i, elem ) {
+					if ( elem.src ) {
+						jQuery.ajax({
+							type: "GET",
+							global: false,
+							url: elem.src,
+							async: false,
+							dataType: "script"
+						});
+					} else {
+						jQuery.globalEval( ( elem.text || elem.textContent || elem.innerHTML || "" ).replace( rcleanScript, "/*$0*/" ) );
+					}
+
+					if ( elem.parentNode ) {
+						elem.parentNode.removeChild( elem );
+					}
+				});
 			}
 		}
 
@@ -11120,7 +11361,7 @@ function cloneCopyEvent( src, dest ) {
 
 		for ( type in events ) {
 			for ( i = 0, l = events[ type ].length; i < l; i++ ) {
-				jQuery.event.add( dest, type + ( events[ type ][ i ].namespace ? "." : "" ) + events[ type ][ i ].namespace, events[ type ][ i ], events[ type ][ i ].data );
+				jQuery.event.add( dest, type, events[ type ][ i ] );
 			}
 		}
 	}
@@ -11182,11 +11423,20 @@ function cloneFixAttributes( src, dest ) {
 	// cloning other types of input fields
 	} else if ( nodeName === "input" || nodeName === "textarea" ) {
 		dest.defaultValue = src.defaultValue;
+
+	// IE blanks contents when cloning scripts
+	} else if ( nodeName === "script" && dest.text !== src.text ) {
+		dest.text = src.text;
 	}
 
 	// Event data gets referenced instead of copied if the expando
 	// gets copied too
 	dest.removeAttribute( jQuery.expando );
+
+	// Clear flags for bubbling special change/submit events, they must
+	// be reattached when the newly cloned events are first activated
+	dest.removeAttribute( "_submit_attached" );
+	dest.removeAttribute( "_change_attached" );
 }
 
 jQuery.buildFragment = function( args, nodes, scripts ) {
@@ -11311,7 +11561,7 @@ jQuery.extend({
 			destElements,
 			i,
 			// IE<=8 does not properly clone detached, unknown element nodes
-			clone = jQuery.support.html5Clone || !rnoshimcache.test( "<" + elem.nodeName ) ?
+			clone = jQuery.support.html5Clone || jQuery.isXMLDoc(elem) || !rnoshimcache.test( "<" + elem.nodeName + ">" ) ?
 				elem.cloneNode( true ) :
 				shimCloneNode( elem );
 
@@ -11361,7 +11611,8 @@ jQuery.extend({
 	},
 
 	clean: function( elems, context, fragment, scripts ) {
-		var checkScriptType;
+		var checkScriptType, script, j,
+				ret = [];
 
 		context = context || document;
 
@@ -11369,8 +11620,6 @@ jQuery.extend({
 		if ( typeof context.createElement === "undefined" ) {
 			context = context.ownerDocument || context[0] && context[0].ownerDocument || document;
 		}
-
-		var ret = [], j;
 
 		for ( var i = 0, elem; (elem = elems[i]) != null; i++ ) {
 			if ( typeof elem === "number" ) {
@@ -11393,7 +11642,9 @@ jQuery.extend({
 					var tag = ( rtagName.exec( elem ) || ["", ""] )[1].toLowerCase(),
 						wrap = wrapMap[ tag ] || wrapMap._default,
 						depth = wrap[0],
-						div = context.createElement("div");
+						div = context.createElement("div"),
+						safeChildNodes = safeFragment.childNodes,
+						remove;
 
 					// Append wrapper element to unknown element safe doc fragment
 					if ( context === document ) {
@@ -11438,6 +11689,21 @@ jQuery.extend({
 					}
 
 					elem = div.childNodes;
+
+					// Clear elements from DocumentFragment (safeFragment or otherwise)
+					// to avoid hoarding elements. Fixes #11356
+					if ( div ) {
+						div.parentNode.removeChild( div );
+
+						// Guard against -1 index exceptions in FF3.6
+						if ( safeChildNodes.length > 0 ) {
+							remove = safeChildNodes[ safeChildNodes.length - 1 ];
+
+							if ( remove && remove.parentNode ) {
+								remove.parentNode.removeChild( remove );
+							}
+						}
+					}
 				}
 			}
 
@@ -11466,16 +11732,17 @@ jQuery.extend({
 				return !elem.type || rscriptType.test( elem.type );
 			};
 			for ( i = 0; ret[i]; i++ ) {
-				if ( scripts && jQuery.nodeName( ret[i], "script" ) && (!ret[i].type || ret[i].type.toLowerCase() === "text/javascript") ) {
-					scripts.push( ret[i].parentNode ? ret[i].parentNode.removeChild( ret[i] ) : ret[i] );
+				script = ret[i];
+				if ( scripts && jQuery.nodeName( script, "script" ) && (!script.type || rscriptType.test( script.type )) ) {
+					scripts.push( script.parentNode ? script.parentNode.removeChild( script ) : script );
 
 				} else {
-					if ( ret[i].nodeType === 1 ) {
-						var jsTags = jQuery.grep( ret[i].getElementsByTagName( "script" ), checkScriptType );
+					if ( script.nodeType === 1 ) {
+						var jsTags = jQuery.grep( script.getElementsByTagName( "script" ), checkScriptType );
 
 						ret.splice.apply( ret, [i + 1, 0].concat( jsTags ) );
 					}
-					fragment.appendChild( ret[i] );
+					fragment.appendChild( script );
 				}
 			}
 		}
@@ -11529,22 +11796,6 @@ jQuery.extend({
 	}
 });
 
-function evalScript( i, elem ) {
-	if ( elem.src ) {
-		jQuery.ajax({
-			url: elem.src,
-			async: false,
-			dataType: "script"
-		});
-	} else {
-		jQuery.globalEval( ( elem.text || elem.textContent || elem.innerHTML || "" ).replace( rcleanScript, "/*$0*/" ) );
-	}
-
-	if ( elem.parentNode ) {
-		elem.parentNode.removeChild( elem );
-	}
-}
-
 
 
 
@@ -11552,29 +11803,27 @@ var ralpha = /alpha\([^)]*\)/i,
 	ropacity = /opacity=([^)]*)/,
 	// fixed for IE9, see #8346
 	rupper = /([A-Z]|^ms)/g,
-	rnumpx = /^-?\d+(?:px)?$/i,
-	rnum = /^-?\d/,
+	rnum = /^[\-+]?(?:\d*\.)?\d+$/i,
+	rnumnonpx = /^-?(?:\d*\.)?\d+(?!px)[^\d\s]+$/i,
 	rrelNum = /^([\-+])=([\-+.\de]+)/,
+	rmargin = /^margin/,
 
 	cssShow = { position: "absolute", visibility: "hidden", display: "block" },
-	cssWidth = [ "Left", "Right" ],
-	cssHeight = [ "Top", "Bottom" ],
+
+	// order is important!
+	cssExpand = [ "Top", "Right", "Bottom", "Left" ],
+
 	curCSS,
 
 	getComputedStyle,
 	currentStyle;
 
 jQuery.fn.css = function( name, value ) {
-	// Setting 'undefined' is a no-op
-	if ( arguments.length === 2 && value === undefined ) {
-		return this;
-	}
-
-	return jQuery.access( this, name, value, true, function( elem, name, value ) {
+	return jQuery.access( this, function( elem, name, value ) {
 		return value !== undefined ?
 			jQuery.style( elem, name, value ) :
 			jQuery.css( elem, name );
-	});
+	}, name, value, arguments.length > 1 );
 };
 
 jQuery.extend({
@@ -11585,7 +11834,7 @@ jQuery.extend({
 			get: function( elem, computed ) {
 				if ( computed ) {
 					// We should always get a number back from opacity
-					var ret = curCSS( elem, "opacity", "opacity" );
+					var ret = curCSS( elem, "opacity" );
 					return ret === "" ? "1" : ret;
 
 				} else {
@@ -11693,56 +11942,174 @@ jQuery.extend({
 
 	// A method for quickly swapping in/out CSS properties to get correct calculations
 	swap: function( elem, options, callback ) {
-		var old = {};
+		var old = {},
+			ret, name;
 
 		// Remember the old values, and insert the new ones
-		for ( var name in options ) {
+		for ( name in options ) {
 			old[ name ] = elem.style[ name ];
 			elem.style[ name ] = options[ name ];
 		}
 
-		callback.call( elem );
+		ret = callback.call( elem );
 
 		// Revert the old values
 		for ( name in options ) {
 			elem.style[ name ] = old[ name ];
 		}
+
+		return ret;
 	}
 });
 
-// DEPRECATED, Use jQuery.css() instead
+// DEPRECATED in 1.3, Use jQuery.css() instead
 jQuery.curCSS = jQuery.css;
 
-jQuery.each(["height", "width"], function( i, name ) {
+if ( document.defaultView && document.defaultView.getComputedStyle ) {
+	getComputedStyle = function( elem, name ) {
+		var ret, defaultView, computedStyle, width,
+			style = elem.style;
+
+		name = name.replace( rupper, "-$1" ).toLowerCase();
+
+		if ( (defaultView = elem.ownerDocument.defaultView) &&
+				(computedStyle = defaultView.getComputedStyle( elem, null )) ) {
+
+			ret = computedStyle.getPropertyValue( name );
+			if ( ret === "" && !jQuery.contains( elem.ownerDocument.documentElement, elem ) ) {
+				ret = jQuery.style( elem, name );
+			}
+		}
+
+		// A tribute to the "awesome hack by Dean Edwards"
+		// WebKit uses "computed value (percentage if specified)" instead of "used value" for margins
+		// which is against the CSSOM draft spec: http://dev.w3.org/csswg/cssom/#resolved-values
+		if ( !jQuery.support.pixelMargin && computedStyle && rmargin.test( name ) && rnumnonpx.test( ret ) ) {
+			width = style.width;
+			style.width = ret;
+			ret = computedStyle.width;
+			style.width = width;
+		}
+
+		return ret;
+	};
+}
+
+if ( document.documentElement.currentStyle ) {
+	currentStyle = function( elem, name ) {
+		var left, rsLeft, uncomputed,
+			ret = elem.currentStyle && elem.currentStyle[ name ],
+			style = elem.style;
+
+		// Avoid setting ret to empty string here
+		// so we don't default to auto
+		if ( ret == null && style && (uncomputed = style[ name ]) ) {
+			ret = uncomputed;
+		}
+
+		// From the awesome hack by Dean Edwards
+		// http://erik.eae.net/archives/2007/07/27/18.54.15/#comment-102291
+
+		// If we're not dealing with a regular pixel number
+		// but a number that has a weird ending, we need to convert it to pixels
+		if ( rnumnonpx.test( ret ) ) {
+
+			// Remember the original values
+			left = style.left;
+			rsLeft = elem.runtimeStyle && elem.runtimeStyle.left;
+
+			// Put in the new values to get a computed value out
+			if ( rsLeft ) {
+				elem.runtimeStyle.left = elem.currentStyle.left;
+			}
+			style.left = name === "fontSize" ? "1em" : ret;
+			ret = style.pixelLeft + "px";
+
+			// Revert the changed values
+			style.left = left;
+			if ( rsLeft ) {
+				elem.runtimeStyle.left = rsLeft;
+			}
+		}
+
+		return ret === "" ? "auto" : ret;
+	};
+}
+
+curCSS = getComputedStyle || currentStyle;
+
+function getWidthOrHeight( elem, name, extra ) {
+
+	// Start with offset property
+	var val = name === "width" ? elem.offsetWidth : elem.offsetHeight,
+		i = name === "width" ? 1 : 0,
+		len = 4;
+
+	if ( val > 0 ) {
+		if ( extra !== "border" ) {
+			for ( ; i < len; i += 2 ) {
+				if ( !extra ) {
+					val -= parseFloat( jQuery.css( elem, "padding" + cssExpand[ i ] ) ) || 0;
+				}
+				if ( extra === "margin" ) {
+					val += parseFloat( jQuery.css( elem, extra + cssExpand[ i ] ) ) || 0;
+				} else {
+					val -= parseFloat( jQuery.css( elem, "border" + cssExpand[ i ] + "Width" ) ) || 0;
+				}
+			}
+		}
+
+		return val + "px";
+	}
+
+	// Fall back to computed then uncomputed css if necessary
+	val = curCSS( elem, name );
+	if ( val < 0 || val == null ) {
+		val = elem.style[ name ];
+	}
+
+	// Computed unit is not pixels. Stop here and return.
+	if ( rnumnonpx.test(val) ) {
+		return val;
+	}
+
+	// Normalize "", auto, and prepare for extra
+	val = parseFloat( val ) || 0;
+
+	// Add padding, border, margin
+	if ( extra ) {
+		for ( ; i < len; i += 2 ) {
+			val += parseFloat( jQuery.css( elem, "padding" + cssExpand[ i ] ) ) || 0;
+			if ( extra !== "padding" ) {
+				val += parseFloat( jQuery.css( elem, "border" + cssExpand[ i ] + "Width" ) ) || 0;
+			}
+			if ( extra === "margin" ) {
+				val += parseFloat( jQuery.css( elem, extra + cssExpand[ i ]) ) || 0;
+			}
+		}
+	}
+
+	return val + "px";
+}
+
+jQuery.each([ "height", "width" ], function( i, name ) {
 	jQuery.cssHooks[ name ] = {
 		get: function( elem, computed, extra ) {
-			var val;
-
 			if ( computed ) {
 				if ( elem.offsetWidth !== 0 ) {
-					return getWH( elem, name, extra );
+					return getWidthOrHeight( elem, name, extra );
 				} else {
-					jQuery.swap( elem, cssShow, function() {
-						val = getWH( elem, name, extra );
+					return jQuery.swap( elem, cssShow, function() {
+						return getWidthOrHeight( elem, name, extra );
 					});
 				}
-
-				return val;
 			}
 		},
 
 		set: function( elem, value ) {
-			if ( rnumpx.test( value ) ) {
-				// ignore negative width and height values #1599
-				value = parseFloat( value );
-
-				if ( value >= 0 ) {
-					return value + "px";
-				}
-
-			} else {
-				return value;
-			}
+			return rnum.test( value ) ?
+				value + "px" :
+				value;
 		}
 	};
 });
@@ -11796,129 +12163,17 @@ jQuery(function() {
 			get: function( elem, computed ) {
 				// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
 				// Work around by temporarily setting element display to inline-block
-				var ret;
-				jQuery.swap( elem, { "display": "inline-block" }, function() {
+				return jQuery.swap( elem, { "display": "inline-block" }, function() {
 					if ( computed ) {
-						ret = curCSS( elem, "margin-right", "marginRight" );
+						return curCSS( elem, "margin-right" );
 					} else {
-						ret = elem.style.marginRight;
+						return elem.style.marginRight;
 					}
 				});
-				return ret;
 			}
 		};
 	}
 });
-
-if ( document.defaultView && document.defaultView.getComputedStyle ) {
-	getComputedStyle = function( elem, name ) {
-		var ret, defaultView, computedStyle;
-
-		name = name.replace( rupper, "-$1" ).toLowerCase();
-
-		if ( (defaultView = elem.ownerDocument.defaultView) &&
-				(computedStyle = defaultView.getComputedStyle( elem, null )) ) {
-			ret = computedStyle.getPropertyValue( name );
-			if ( ret === "" && !jQuery.contains( elem.ownerDocument.documentElement, elem ) ) {
-				ret = jQuery.style( elem, name );
-			}
-		}
-
-		return ret;
-	};
-}
-
-if ( document.documentElement.currentStyle ) {
-	currentStyle = function( elem, name ) {
-		var left, rsLeft, uncomputed,
-			ret = elem.currentStyle && elem.currentStyle[ name ],
-			style = elem.style;
-
-		// Avoid setting ret to empty string here
-		// so we don't default to auto
-		if ( ret === null && style && (uncomputed = style[ name ]) ) {
-			ret = uncomputed;
-		}
-
-		// From the awesome hack by Dean Edwards
-		// http://erik.eae.net/archives/2007/07/27/18.54.15/#comment-102291
-
-		// If we're not dealing with a regular pixel number
-		// but a number that has a weird ending, we need to convert it to pixels
-		if ( !rnumpx.test( ret ) && rnum.test( ret ) ) {
-
-			// Remember the original values
-			left = style.left;
-			rsLeft = elem.runtimeStyle && elem.runtimeStyle.left;
-
-			// Put in the new values to get a computed value out
-			if ( rsLeft ) {
-				elem.runtimeStyle.left = elem.currentStyle.left;
-			}
-			style.left = name === "fontSize" ? "1em" : ( ret || 0 );
-			ret = style.pixelLeft + "px";
-
-			// Revert the changed values
-			style.left = left;
-			if ( rsLeft ) {
-				elem.runtimeStyle.left = rsLeft;
-			}
-		}
-
-		return ret === "" ? "auto" : ret;
-	};
-}
-
-curCSS = getComputedStyle || currentStyle;
-
-function getWH( elem, name, extra ) {
-
-	// Start with offset property
-	var val = name === "width" ? elem.offsetWidth : elem.offsetHeight,
-		which = name === "width" ? cssWidth : cssHeight,
-		i = 0,
-		len = which.length;
-
-	if ( val > 0 ) {
-		if ( extra !== "border" ) {
-			for ( ; i < len; i++ ) {
-				if ( !extra ) {
-					val -= parseFloat( jQuery.css( elem, "padding" + which[ i ] ) ) || 0;
-				}
-				if ( extra === "margin" ) {
-					val += parseFloat( jQuery.css( elem, extra + which[ i ] ) ) || 0;
-				} else {
-					val -= parseFloat( jQuery.css( elem, "border" + which[ i ] + "Width" ) ) || 0;
-				}
-			}
-		}
-
-		return val + "px";
-	}
-
-	// Fall back to computed then uncomputed css if necessary
-	val = curCSS( elem, name, name );
-	if ( val < 0 || val == null ) {
-		val = elem.style[ name ] || 0;
-	}
-	// Normalize "", auto, and prepare for extra
-	val = parseFloat( val ) || 0;
-
-	// Add padding, border, margin
-	if ( extra ) {
-		for ( ; i < len; i++ ) {
-			val += parseFloat( jQuery.css( elem, "padding" + which[ i ] ) ) || 0;
-			if ( extra !== "padding" ) {
-				val += parseFloat( jQuery.css( elem, "border" + which[ i ] + "Width" ) ) || 0;
-			}
-			if ( extra === "margin" ) {
-				val += parseFloat( jQuery.css( elem, extra + which[ i ] ) ) || 0;
-			}
-		}
-	}
-
-	return val + "px";
-}
 
 if ( jQuery.expr && jQuery.expr.filters ) {
 	jQuery.expr.filters.hidden = function( elem ) {
@@ -11932,6 +12187,31 @@ if ( jQuery.expr && jQuery.expr.filters ) {
 		return !jQuery.expr.filters.hidden( elem );
 	};
 }
+
+// These hooks are used by animate to expand properties
+jQuery.each({
+	margin: "",
+	padding: "",
+	border: "Width"
+}, function( prefix, suffix ) {
+
+	jQuery.cssHooks[ prefix + suffix ] = {
+		expand: function( value ) {
+			var i,
+
+				// assumes a single number if not a string
+				parts = typeof value === "string" ? value.split(" ") : [ value ],
+				expanded = {};
+
+			for ( i = 0; i < 4; i++ ) {
+				expanded[ prefix + cssExpand[ i ] + suffix ] =
+					parts[ i ] || parts[ i - 2 ] || parts[ 0 ];
+			}
+
+			return expanded;
+		}
+	};
+});
 
 
 
@@ -12251,7 +12531,7 @@ jQuery.extend({
 		isLocal: rlocalProtocol.test( ajaxLocParts[ 1 ] ),
 		global: true,
 		type: "GET",
-		contentType: "application/x-www-form-urlencoded",
+		contentType: "application/x-www-form-urlencoded; charset=UTF-8",
 		processData: true,
 		async: true,
 		/*
@@ -12577,7 +12857,7 @@ jQuery.extend({
 		// Apply prefilters
 		inspectPrefiltersOrTransports( prefilters, s, options, jqXHR );
 
-		// If request was aborted inside a prefiler, stop there
+		// If request was aborted inside a prefilter, stop there
 		if ( state === 2 ) {
 			return false;
 		}
@@ -12750,11 +13030,11 @@ function buildParams( prefix, obj, traditional, add ) {
 				// a server error. Possible fixes are to modify rack's
 				// deserialization algorithm or to provide an option or flag
 				// to force array serialization to be shallow.
-				buildParams( prefix + "[" + ( typeof v === "object" || jQuery.isArray(v) ? i : "" ) + "]", v, traditional, add );
+				buildParams( prefix + "[" + ( typeof v === "object" ? i : "" ) + "]", v, traditional, add );
 			}
 		});
 
-	} else if ( !traditional && obj != null && typeof obj === "object" ) {
+	} else if ( !traditional && jQuery.type( obj ) === "object" ) {
 		// Serialize object item.
 		for ( var name in obj ) {
 			buildParams( prefix + "[" + name + "]", obj[ name ], traditional, add );
@@ -12950,8 +13230,7 @@ jQuery.ajaxSetup({
 // Detect, normalize options and install callbacks for jsonp requests
 jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
 
-	var inspectData = s.contentType === "application/x-www-form-urlencoded" &&
-		( typeof s.data === "string" );
+	var inspectData = ( typeof s.data === "string" ) && /^application\/x\-www\-form\-urlencoded/.test( s.contentType );
 
 	if ( s.dataTypes[ 0 ] === "jsonp" ||
 		s.jsonp !== false && ( jsre.test( s.url ) ||
@@ -13252,7 +13531,13 @@ if ( jQuery.support.ajax ) {
 									if ( xml && xml.documentElement /* #4958 */ ) {
 										responses.xml = xml;
 									}
-									responses.text = xhr.responseText;
+
+									// When requesting binary data, IE6-9 will throw an exception
+									// on any attempt to access responseText (#11426)
+									try {
+										responses.text = xhr.responseText;
+									} catch( _ ) {
+									}
 
 									// Firefox throws an exception when accessing
 									// statusText for faulty cross-domain requests
@@ -13360,7 +13645,8 @@ jQuery.fn.extend({
 					// Set elements which have been overridden with display: none
 					// in a stylesheet to whatever the default browser style is
 					// for such an element
-					if ( display === "" && jQuery.css(elem, "display") === "none" ) {
+					if ( (display === "" && jQuery.css(elem, "display") === "none") ||
+						!jQuery.contains( elem.ownerDocument.documentElement, elem ) ) {
 						jQuery._data( elem, "olddisplay", defaultDisplay(elem.nodeName) );
 					}
 				}
@@ -13464,24 +13750,37 @@ jQuery.fn.extend({
 			var opt = jQuery.extend( {}, optall ),
 				isElement = this.nodeType === 1,
 				hidden = isElement && jQuery(this).is(":hidden"),
-				name, val, p, e,
+				name, val, p, e, hooks, replace,
 				parts, start, end, unit,
 				method;
 
 			// will store per property easing and be used to determine when an animation is complete
 			opt.animatedProperties = {};
 
+			// first pass over propertys to expand / normalize
 			for ( p in prop ) {
-
-				// property name normalization
 				name = jQuery.camelCase( p );
 				if ( p !== name ) {
 					prop[ name ] = prop[ p ];
 					delete prop[ p ];
 				}
 
-				val = prop[ name ];
+				if ( ( hooks = jQuery.cssHooks[ name ] ) && "expand" in hooks ) {
+					replace = hooks.expand( prop[ name ] );
+					delete prop[ name ];
 
+					// not quite $.extend, this wont overwrite keys already present.
+					// also - reusing 'p' from above because we have the correct "name"
+					for ( p in replace ) {
+						if ( ! ( p in prop ) ) {
+							prop[ p ] = replace[ p ];
+						}
+					}
+				}
+			}
+
+			for ( name in prop ) {
+				val = prop[ name ];
 				// easing resolution: per property > opt.specialEasing > opt.easing > 'swing' (default)
 				if ( jQuery.isArray( val ) ) {
 					opt.animatedProperties[ name ] = val[ 1 ];
@@ -13708,11 +14007,11 @@ jQuery.extend({
 	},
 
 	easing: {
-		linear: function( p, n, firstNum, diff ) {
-			return firstNum + diff * p;
+		linear: function( p ) {
+			return p;
 		},
-		swing: function( p, n, firstNum, diff ) {
-			return ( ( -Math.cos( p*Math.PI ) / 2 ) + 0.5 ) * diff + firstNum;
+		swing: function( p ) {
+			return ( -Math.cos( p*Math.PI ) / 2 ) + 0.5;
 		}
 	},
 
@@ -13770,8 +14069,12 @@ jQuery.fx.prototype = {
 		t.queue = this.options.queue;
 		t.elem = this.elem;
 		t.saveState = function() {
-			if ( self.options.hide && jQuery._data( self.elem, "fxshow" + self.prop ) === undefined ) {
-				jQuery._data( self.elem, "fxshow" + self.prop, self.start );
+			if ( jQuery._data( self.elem, "fxshow" + self.prop ) === undefined ) {
+				if ( self.options.hide ) {
+					jQuery._data( self.elem, "fxshow" + self.prop, self.start );
+				} else if ( self.options.show ) {
+					jQuery._data( self.elem, "fxshow" + self.prop, self.end );
+				}
 			}
 		};
 
@@ -13938,12 +14241,14 @@ jQuery.extend( jQuery.fx, {
 	}
 });
 
-// Adds width/height step functions
-// Do not set anything below 0
-jQuery.each([ "width", "height" ], function( i, prop ) {
-	jQuery.fx.step[ prop ] = function( fx ) {
-		jQuery.style( fx.elem, prop, Math.max(0, fx.now) + fx.unit );
-	};
+// Ensure props that can't be negative don't go there on undershoot easing
+jQuery.each( fxAttrs.concat.apply( [], fxAttrs ), function( i, prop ) {
+	// exclude marginTop, marginLeft, marginBottom and marginRight from this list
+	if ( prop.indexOf( "margin" ) ) {
+		jQuery.fx.step[ prop ] = function( fx ) {
+			jQuery.style( fx.elem, prop, Math.max(0, fx.now) + fx.unit );
+		};
+	}
 });
 
 if ( jQuery.expr && jQuery.expr.filters ) {
@@ -13980,7 +14285,7 @@ function defaultDisplay( nodeName ) {
 			// document to it; WebKit & Firefox won't allow reusing the iframe document.
 			if ( !iframeDoc || !iframe.createElement ) {
 				iframeDoc = ( iframe.contentWindow || iframe.contentDocument ).document;
-				iframeDoc.write( ( document.compatMode === "CSS1Compat" ? "<!doctype html>" : "" ) + "<html><body>" );
+				iframeDoc.write( ( jQuery.support.boxModel ? "<!doctype html>" : "" ) + "<html><body>" );
 				iframeDoc.close();
 			}
 
@@ -14002,33 +14307,15 @@ function defaultDisplay( nodeName ) {
 
 
 
-var rtable = /^t(?:able|d|h)$/i,
+var getOffset,
+	rtable = /^t(?:able|d|h)$/i,
 	rroot = /^(?:body|html)$/i;
 
 if ( "getBoundingClientRect" in document.documentElement ) {
-	jQuery.fn.offset = function( options ) {
-		var elem = this[0], box;
-
-		if ( options ) {
-			return this.each(function( i ) {
-				jQuery.offset.setOffset( this, options, i );
-			});
-		}
-
-		if ( !elem || !elem.ownerDocument ) {
-			return null;
-		}
-
-		if ( elem === elem.ownerDocument.body ) {
-			return jQuery.offset.bodyOffset( elem );
-		}
-
+	getOffset = function( elem, doc, docElem, box ) {
 		try {
 			box = elem.getBoundingClientRect();
 		} catch(e) {}
-
-		var doc = elem.ownerDocument,
-			docElem = doc.documentElement;
 
 		// Make sure we're not dealing with a disconnected DOM node
 		if ( !box || !jQuery.contains( docElem, elem ) ) {
@@ -14036,7 +14323,7 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 		}
 
 		var body = doc.body,
-			win = getWindow(doc),
+			win = getWindow( doc ),
 			clientTop  = docElem.clientTop  || body.clientTop  || 0,
 			clientLeft = docElem.clientLeft || body.clientLeft || 0,
 			scrollTop  = win.pageYOffset || jQuery.support.boxModel && docElem.scrollTop  || body.scrollTop,
@@ -14048,28 +14335,10 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 	};
 
 } else {
-	jQuery.fn.offset = function( options ) {
-		var elem = this[0];
-
-		if ( options ) {
-			return this.each(function( i ) {
-				jQuery.offset.setOffset( this, options, i );
-			});
-		}
-
-		if ( !elem || !elem.ownerDocument ) {
-			return null;
-		}
-
-		if ( elem === elem.ownerDocument.body ) {
-			return jQuery.offset.bodyOffset( elem );
-		}
-
+	getOffset = function( elem, doc, docElem ) {
 		var computedStyle,
 			offsetParent = elem.offsetParent,
 			prevOffsetParent = elem,
-			doc = elem.ownerDocument,
-			docElem = doc.documentElement,
 			body = doc.body,
 			defaultView = doc.defaultView,
 			prevComputedStyle = defaultView ? defaultView.getComputedStyle( elem, null ) : elem.currentStyle,
@@ -14119,6 +14388,29 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 		return { top: top, left: left };
 	};
 }
+
+jQuery.fn.offset = function( options ) {
+	if ( arguments.length ) {
+		return options === undefined ?
+			this :
+			this.each(function( i ) {
+				jQuery.offset.setOffset( this, options, i );
+			});
+	}
+
+	var elem = this[0],
+		doc = elem && elem.ownerDocument;
+
+	if ( !doc ) {
+		return null;
+	}
+
+	if ( elem === doc.body ) {
+		return jQuery.offset.bodyOffset( elem );
+	}
+
+	return getOffset( elem, doc, doc.documentElement );
+};
 
 jQuery.offset = {
 
@@ -14225,42 +14517,30 @@ jQuery.fn.extend({
 
 
 // Create scrollLeft and scrollTop methods
-jQuery.each( ["Left", "Top"], function( i, name ) {
-	var method = "scroll" + name;
+jQuery.each( {scrollLeft: "pageXOffset", scrollTop: "pageYOffset"}, function( method, prop ) {
+	var top = /Y/.test( prop );
 
 	jQuery.fn[ method ] = function( val ) {
-		var elem, win;
+		return jQuery.access( this, function( elem, method, val ) {
+			var win = getWindow( elem );
 
-		if ( val === undefined ) {
-			elem = this[ 0 ];
-
-			if ( !elem ) {
-				return null;
+			if ( val === undefined ) {
+				return win ? (prop in win) ? win[ prop ] :
+					jQuery.support.boxModel && win.document.documentElement[ method ] ||
+						win.document.body[ method ] :
+					elem[ method ];
 			}
-
-			win = getWindow( elem );
-
-			// Return the scroll offset
-			return win ? ("pageXOffset" in win) ? win[ i ? "pageYOffset" : "pageXOffset" ] :
-				jQuery.support.boxModel && win.document.documentElement[ method ] ||
-					win.document.body[ method ] :
-				elem[ method ];
-		}
-
-		// Set the scroll offset
-		return this.each(function() {
-			win = getWindow( this );
 
 			if ( win ) {
 				win.scrollTo(
-					!i ? val : jQuery( win ).scrollLeft(),
-					 i ? val : jQuery( win ).scrollTop()
+					!top ? val : jQuery( win ).scrollLeft(),
+					 top ? val : jQuery( win ).scrollTop()
 				);
 
 			} else {
-				this[ method ] = val;
+				elem[ method ] = val;
 			}
-		});
+		}, method, val, arguments.length, null );
 	};
 });
 
@@ -14276,9 +14556,10 @@ function getWindow( elem ) {
 
 
 // Create width, height, innerHeight, innerWidth, outerHeight and outerWidth methods
-jQuery.each([ "Height", "Width" ], function( i, name ) {
-
-	var type = name.toLowerCase();
+jQuery.each( { Height: "height", Width: "width" }, function( name, type ) {
+	var clientProp = "client" + name,
+		scrollProp = "scroll" + name,
+		offsetProp = "offset" + name;
 
 	// innerHeight and innerWidth
 	jQuery.fn[ "inner" + name ] = function() {
@@ -14300,50 +14581,48 @@ jQuery.each([ "Height", "Width" ], function( i, name ) {
 			null;
 	};
 
-	jQuery.fn[ type ] = function( size ) {
-		// Get window width or height
-		var elem = this[0];
-		if ( !elem ) {
-			return size == null ? null : this;
-		}
+	jQuery.fn[ type ] = function( value ) {
+		return jQuery.access( this, function( elem, type, value ) {
+			var doc, docElemProp, orig, ret;
 
-		if ( jQuery.isFunction( size ) ) {
-			return this.each(function( i ) {
-				var self = jQuery( this );
-				self[ type ]( size.call( this, i, self[ type ]() ) );
-			});
-		}
+			if ( jQuery.isWindow( elem ) ) {
+				// 3rd condition allows Nokia support, as it supports the docElem prop but not CSS1Compat
+				doc = elem.document;
+				docElemProp = doc.documentElement[ clientProp ];
+				return jQuery.support.boxModel && docElemProp ||
+					doc.body && doc.body[ clientProp ] || docElemProp;
+			}
 
-		if ( jQuery.isWindow( elem ) ) {
-			// Everyone else use document.documentElement or document.body depending on Quirks vs Standards mode
-			// 3rd condition allows Nokia support, as it supports the docElem prop but not CSS1Compat
-			var docElemProp = elem.document.documentElement[ "client" + name ],
-				body = elem.document.body;
-			return elem.document.compatMode === "CSS1Compat" && docElemProp ||
-				body && body[ "client" + name ] || docElemProp;
+			// Get document width or height
+			if ( elem.nodeType === 9 ) {
+				// Either scroll[Width/Height] or offset[Width/Height], whichever is greater
+				doc = elem.documentElement;
 
-		// Get document width or height
-		} else if ( elem.nodeType === 9 ) {
-			// Either scroll[Width/Height] or offset[Width/Height], whichever is greater
-			return Math.max(
-				elem.documentElement["client" + name],
-				elem.body["scroll" + name], elem.documentElement["scroll" + name],
-				elem.body["offset" + name], elem.documentElement["offset" + name]
-			);
+				// when a window > document, IE6 reports a offset[Width/Height] > client[Width/Height]
+				// so we can't use max, as it'll choose the incorrect offset[Width/Height]
+				// instead we use the correct client[Width/Height]
+				// support:IE6
+				if ( doc[ clientProp ] >= doc[ scrollProp ] ) {
+					return doc[ clientProp ];
+				}
 
-		// Get or set width or height on the element
-		} else if ( size === undefined ) {
-			var orig = jQuery.css( elem, type ),
+				return Math.max(
+					elem.body[ scrollProp ], doc[ scrollProp ],
+					elem.body[ offsetProp ], doc[ offsetProp ]
+				);
+			}
+
+			// Get width or height on the element
+			if ( value === undefined ) {
+				orig = jQuery.css( elem, type );
 				ret = parseFloat( orig );
+				return jQuery.isNumeric( ret ) ? ret : orig;
+			}
 
-			return jQuery.isNumeric( ret ) ? ret : orig;
-
-		// Set the width or height on the element (default to pixels if value is unitless)
-		} else {
-			return this.css( type, typeof size === "string" ? size : size + "px" );
-		}
+			// Set the width or height on the element
+			jQuery( elem ).css( type, value );
+		}, type, value, arguments.length, null );
 	};
-
 });
 
 
@@ -14371,11 +14650,13 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
 
 })( window );
-//     Backbone.js 0.5.3
-//     (c) 2010-2011 Jeremy Ashkenas, DocumentCloud Inc.
+
+//     Backbone.js 0.9.2
+
+//     (c) 2010-2012 Jeremy Ashkenas, DocumentCloud Inc.
 //     Backbone may be freely distributed under the MIT license.
 //     For all details and documentation:
-//     http://documentcloud.github.com/backbone
+//     http://backbonejs.org
 
 (function(root, factory) {
   // Set up Backbone appropriately for the environment.
@@ -14398,7 +14679,8 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   // Initial Setup
   // -------------
 
-  // Save the previous value of the `Backbone` variable.
+  // Save the previous value of the `Backbone` variable, so that it can be
+  // restored later on, if `noConflict` is used.
   var previousBackbone = root.Backbone;
 
   // Create a local reference to slice/splice.
@@ -14406,7 +14688,16 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   var splice = Array.prototype.splice;
 
   // Current version of the library. Keep in sync with `package.json`.
-  Backbone.VERSION = '0.5.3';
+  Backbone.VERSION = '0.9.2';
+
+  // Set the JavaScript library that will be used for DOM manipulation and
+  // Ajax calls (a.k.a. the `$` variable). By default Backbone will use: jQuery,
+  // Zepto, or Ender; but the `setDomLibrary()` method lets you inject an
+  // alternate JavaScript library (or a mock library for testing your views
+  // outside of a browser).
+  Backbone.setDomLibrary = function(lib) {
+    $ = lib;
+  };
 
   // Runs Backbone.js in *noConflict* mode, returning the `Backbone` variable
   // to its previous owner. Returns a reference to this Backbone object.
@@ -14429,6 +14720,9 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   // Backbone.Events
   // -----------------
 
+  // Regular expression used to split event strings
+  var eventSplitter = /\s+/;
+
   // A module that can be mixed in to *any object* in order to provide it with
   // custom events. You may bind with `on` or remove with `off` callback functions
   // to an event; trigger`-ing an event fires all callbacks in succession.
@@ -14438,89 +14732,110 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   //     object.on('expand', function(){ alert('expanded'); });
   //     object.trigger('expand');
   //
-  Backbone.Events = {
+  var Events = Backbone.Events = {
 
-    // Bind an event, specified by a string name, `ev`, to a `callback`
+    // Bind one or more space separated events, `events`, to a `callback`
     // function. Passing `"all"` will bind the callback to all events fired.
-    on : function(events, callback, context) {
-      var ev;
-      events = events.split(/\s+/);
-      var calls = this._callbacks || (this._callbacks = {});
-      while (ev = events.shift()) {
-        // Create an immutable callback list, allowing traversal during
-        // modification.  The tail is an empty object that will always be used
-        // as the next node.
-        var list  = calls[ev] || (calls[ev] = {});
-        var tail = list.tail || (list.tail = list.next = {});
-        tail.callback = callback;
-        tail.context = context;
-        list.tail = tail.next = {};
+    on: function(events, callback, context) {
+
+      var calls, event, node, tail, list;
+      if (!callback) return this;
+      events = events.split(eventSplitter);
+      calls = this._callbacks || (this._callbacks = {});
+
+      // Create an immutable callback list, allowing traversal during
+      // modification.  The tail is an empty object that will always be used
+      // as the next node.
+      while (event = events.shift()) {
+        list = calls[event];
+        node = list ? list.tail : {};
+        node.next = tail = {};
+        node.context = context;
+        node.callback = callback;
+        calls[event] = {tail: tail, next: list ? list.next : node};
       }
+
       return this;
     },
 
     // Remove one or many callbacks. If `context` is null, removes all callbacks
     // with that function. If `callback` is null, removes all callbacks for the
-    // event. If `ev` is null, removes all bound callbacks for all events.
-    off : function(events, callback, context) {
-      var ev, calls, node;
-      if (!events) {
+    // event. If `events` is null, removes all bound callbacks for all events.
+    off: function(events, callback, context) {
+      var event, calls, node, tail, cb, ctx;
+
+      // No events, or removing *all* events.
+      if (!(calls = this._callbacks)) return;
+      if (!(events || callback || context)) {
         delete this._callbacks;
-      } else if (calls = this._callbacks) {
-        events = events.split(/\s+/);
-        while (ev = events.shift()) {
-          node = calls[ev];
-          delete calls[ev];
-          if (!callback || !node) continue;
-          // Create a new list, omitting the indicated event/context pairs.
-          while ((node = node.next) && node.next) {
-            if (node.callback === callback &&
-              (!context || node.context === context)) continue;
-            this.on(ev, node.callback, node.context);
+        return this;
+      }
+
+      // Loop through the listed events and contexts, splicing them out of the
+      // linked list of callbacks if appropriate.
+      events = events ? events.split(eventSplitter) : _.keys(calls);
+      while (event = events.shift()) {
+        node = calls[event];
+        delete calls[event];
+        if (!node || !(callback || context)) continue;
+        // Create a new list, omitting the indicated callbacks.
+        tail = node.tail;
+        while ((node = node.next) !== tail) {
+          cb = node.callback;
+          ctx = node.context;
+          if ((callback && cb !== callback) || (context && ctx !== context)) {
+            this.on(event, cb, ctx);
           }
         }
       }
+
       return this;
     },
 
-    // Trigger an event, firing all bound callbacks. Callbacks are passed the
-    // same arguments as `trigger` is, apart from the event name.
-    // Listening for `"all"` passes the true event name as the first argument.
-    trigger : function(events) {
+    // Trigger one or many events, firing all bound callbacks. Callbacks are
+    // passed the same arguments as `trigger` is, apart from the event name
+    // (unless you're listening on `"all"`, which will cause your callback to
+    // receive the true name of the event as the first argument).
+    trigger: function(events) {
       var event, node, calls, tail, args, all, rest;
       if (!(calls = this._callbacks)) return this;
-      all = calls['all'];
-      (events = events.split(/\s+/)).push(null);
-      // Save references to the current heads & tails.
-      while (event = events.shift()) {
-        if (all) events.push({next: all.next, tail: all.tail, event: event});
-        if (!(node = calls[event])) continue;
-        events.push({next: node.next, tail: node.tail});
-      }
-      // Traverse each list, stopping when the saved tail is reached.
+      all = calls.all;
+      events = events.split(eventSplitter);
       rest = slice.call(arguments, 1);
-      while (node = events.pop()) {
-        tail = node.tail;
-        args = node.event ? [node.event].concat(rest) : rest;
-        while ((node = node.next) !== tail) {
-          node.callback.apply(node.context || this, args);
+
+      // For each event, walk through the linked list of callbacks twice,
+      // first to trigger the event, then to trigger any `"all"` callbacks.
+      while (event = events.shift()) {
+        if (node = calls[event]) {
+          tail = node.tail;
+          while ((node = node.next) !== tail) {
+            node.callback.apply(node.context || this, rest);
+          }
+        }
+        if (node = all) {
+          tail = node.tail;
+          args = [event].concat(rest);
+          while ((node = node.next) !== tail) {
+            node.callback.apply(node.context || this, args);
+          }
         }
       }
+
       return this;
     }
 
   };
 
   // Aliases for backwards compatibility.
-  Backbone.Events.bind   = Backbone.Events.on;
-  Backbone.Events.unbind = Backbone.Events.off;
+  Events.bind   = Events.on;
+  Events.unbind = Events.off;
 
   // Backbone.Model
   // --------------
 
   // Create a new model, with defined attributes. A client id (`cid`)
   // is automatically generated and assigned for you.
-  Backbone.Model = function(attributes, options) {
+  var Model = Backbone.Model = function(attributes, options) {
     var defaults;
     attributes || (attributes = {});
     if (options && options.parse) attributes = this.parse(attributes);
@@ -14531,54 +14846,70 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     this.attributes = {};
     this._escapedAttributes = {};
     this.cid = _.uniqueId('c');
-    this.set(attributes, {silent : true});
-    this._changed = false;
+    this.changed = {};
+    this._silent = {};
+    this._pending = {};
+    this.set(attributes, {silent: true});
+    // Reset change tracking.
+    this.changed = {};
+    this._silent = {};
+    this._pending = {};
     this._previousAttributes = _.clone(this.attributes);
     this.initialize.apply(this, arguments);
   };
 
   // Attach all inheritable methods to the Model prototype.
-  _.extend(Backbone.Model.prototype, Backbone.Events, {
+  _.extend(Model.prototype, Events, {
 
-    // Has the item been changed since the last `"change"` event?
-    _changed : false,
+    // A hash of attributes whose current and previous value differ.
+    changed: null,
+
+    // A hash of attributes that have silently changed since the last time
+    // `change` was called.  Will become pending attributes on the next call.
+    _silent: null,
+
+    // A hash of attributes that have changed since the last `'change'` event
+    // began.
+    _pending: null,
 
     // The default name for the JSON `id` attribute is `"id"`. MongoDB and
     // CouchDB users may want to set this to `"_id"`.
-    idAttribute : 'id',
+    idAttribute: 'id',
 
     // Initialize is an empty function by default. Override it with your own
     // initialization logic.
-    initialize : function(){},
+    initialize: function(){},
 
     // Return a copy of the model's `attributes` object.
-    toJSON : function() {
+    toJSON: function(options) {
       return _.clone(this.attributes);
     },
 
     // Get the value of an attribute.
-    get : function(attr) {
+    get: function(attr) {
       return this.attributes[attr];
     },
 
     // Get the HTML-escaped value of an attribute.
-    escape : function(attr) {
+    escape: function(attr) {
       var html;
       if (html = this._escapedAttributes[attr]) return html;
-      var val = this.attributes[attr];
+      var val = this.get(attr);
       return this._escapedAttributes[attr] = _.escape(val == null ? '' : '' + val);
     },
 
     // Returns `true` if the attribute contains a value that is not null
     // or undefined.
-    has : function(attr) {
-      return this.attributes[attr] != null;
+    has: function(attr) {
+      return this.get(attr) != null;
     },
 
     // Set a hash of model attributes on the object, firing `"change"` unless
     // you choose to silence it.
-    set : function(key, value, options) {
+    set: function(key, value, options) {
       var attrs, attr, val;
+
+      // Handle both `"key", value` and `{key: value}` -style arguments.
       if (_.isObject(key) || key == null) {
         attrs = key;
         options = value;
@@ -14590,55 +14921,59 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
       // Extract attributes and options.
       options || (options = {});
       if (!attrs) return this;
-      if (attrs.attributes) attrs = attrs.attributes;
-      if (options.unset) for (var attr in attrs) attrs[attr] = void 0;
-      var now = this.attributes, escaped = this._escapedAttributes;
+      if (attrs instanceof Model) attrs = attrs.attributes;
+      if (options.unset) for (attr in attrs) attrs[attr] = void 0;
 
       // Run validation.
-      if (!options.silent && this.validate && !this._performValidation(attrs, options)) return false;
+      if (!this._validate(attrs, options)) return false;
 
       // Check for changes of `id`.
       if (this.idAttribute in attrs) this.id = attrs[this.idAttribute];
 
-      // We're about to start triggering change events.
-      var alreadyChanging = this._changing;
-      this._changing = true;
+      var changes = options.changes = {};
+      var now = this.attributes;
+      var escaped = this._escapedAttributes;
+      var prev = this._previousAttributes || {};
 
-      // Update attributes.
-      var changes = {};
+      // For each `set` attribute...
       for (attr in attrs) {
         val = attrs[attr];
-        if (!_.isEqual(now[attr], val) || (options.unset && (attr in now))) {
-          options.unset ? delete now[attr] : now[attr] = val;
+
+        // If the new and current value differ, record the change.
+        if (!_.isEqual(now[attr], val) || (options.unset && _.has(now, attr))) {
           delete escaped[attr];
-          this._changed = true;
-          changes[attr] = val;
+          (options.silent ? this._silent : changes)[attr] = true;
+        }
+
+        // Update or delete the current value.
+        options.unset ? delete now[attr] : now[attr] = val;
+
+        // If the new and previous value differ, record the change.  If not,
+        // then remove changes for this attribute.
+        if (!_.isEqual(prev[attr], val) || (_.has(now, attr) != _.has(prev, attr))) {
+          this.changed[attr] = val;
+          if (!options.silent) this._pending[attr] = true;
+        } else {
+          delete this.changed[attr];
+          delete this._pending[attr];
         }
       }
 
-      // Fire `change:attribute` events.
-      for (var attr in changes) {
-        if (!options.silent) this.trigger('change:' + attr, this, changes[attr], options);
-      }
-
-      // Fire the `"change"` event, if the model has been changed.
-      if (!alreadyChanging) {
-        if (!options.silent && this._changed) this.change(options);
-        this._changing = false;
-      }
+      // Fire the `"change"` events.
+      if (!options.silent) this.change(options);
       return this;
     },
 
     // Remove an attribute from the model, firing `"change"` unless you choose
     // to silence it. `unset` is a noop if the attribute doesn't exist.
-    unset : function(attr, options) {
+    unset: function(attr, options) {
       (options || (options = {})).unset = true;
       return this.set(attr, null, options);
     },
 
     // Clear all attributes on the model, firing `"change"` unless you choose
     // to silence it.
-    clear : function(options) {
+    clear: function(options) {
       (options || (options = {})).unset = true;
       return this.set(_.clone(this.attributes), options);
     },
@@ -14646,7 +14981,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // Fetch the model from the server. If the server's representation of the
     // model differs from its current attributes, they will be overriden,
     // triggering a `"change"` event.
-    fetch : function(options) {
+    fetch: function(options) {
       options = options ? _.clone(options) : {};
       var model = this;
       var success = options.success;
@@ -14661,128 +14996,205 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // Set a hash of model attributes, and sync the model to the server.
     // If the server returns an attributes hash that differs, the model's
     // state will be `set` again.
-    save : function(attrs, options) {
+    save: function(key, value, options) {
+      var attrs, current;
+
+      // Handle both `("key", value)` and `({key: value})` -style calls.
+      if (_.isObject(key) || key == null) {
+        attrs = key;
+        options = value;
+      } else {
+        attrs = {};
+        attrs[key] = value;
+      }
       options = options ? _.clone(options) : {};
-      if (attrs && !this.set(attrs, options)) return false;
+
+      // If we're "wait"-ing to set changed attributes, validate early.
+      if (options.wait) {
+        if (!this._validate(attrs, options)) return false;
+        current = _.clone(this.attributes);
+      }
+
+      // Regular saves `set` attributes before persisting to the server.
+      var silentOptions = _.extend({}, options, {silent: true});
+      if (attrs && !this.set(attrs, options.wait ? silentOptions : options)) {
+        return false;
+      }
+
+      // After a successful server-side save, the client is (optionally)
+      // updated with the server-side state.
       var model = this;
       var success = options.success;
       options.success = function(resp, status, xhr) {
-        if (!model.set(model.parse(resp, xhr), options)) return false;
+        var serverAttrs = model.parse(resp, xhr);
+        if (options.wait) {
+          delete options.wait;
+          serverAttrs = _.extend(attrs || {}, serverAttrs);
+        }
+        if (!model.set(serverAttrs, options)) return false;
         if (success) {
           success(model, resp);
         } else {
           model.trigger('sync', model, resp, options);
         }
       };
+
+      // Finish configuring and sending the Ajax request.
       options.error = Backbone.wrapError(options.error, model, options);
       var method = this.isNew() ? 'create' : 'update';
-      return (this.sync || Backbone.sync).call(this, method, this, options);
+      var xhr = (this.sync || Backbone.sync).call(this, method, this, options);
+      if (options.wait) this.set(current, silentOptions);
+      return xhr;
     },
 
     // Destroy this model on the server if it was already persisted.
-    // Upon success, the model is removed from its collection, if it has one.
-    destroy : function(options) {
+    // Optimistically removes the model from its collection, if it has one.
+    // If `wait: true` is passed, waits for the server to respond before removal.
+    destroy: function(options) {
       options = options ? _.clone(options) : {};
-      if (this.isNew()) return this.trigger('destroy', this, this.collection, options);
       var model = this;
       var success = options.success;
-      options.success = function(resp) {
+
+      var triggerDestroy = function() {
         model.trigger('destroy', model, model.collection, options);
+      };
+
+      if (this.isNew()) {
+        triggerDestroy();
+        return false;
+      }
+
+      options.success = function(resp) {
+        if (options.wait) triggerDestroy();
         if (success) {
           success(model, resp);
         } else {
           model.trigger('sync', model, resp, options);
         }
       };
+
       options.error = Backbone.wrapError(options.error, model, options);
-      return (this.sync || Backbone.sync).call(this, 'delete', this, options);
+      var xhr = (this.sync || Backbone.sync).call(this, 'delete', this, options);
+      if (!options.wait) triggerDestroy();
+      return xhr;
     },
 
     // Default URL for the model's representation on the server -- if you're
     // using Backbone's restful methods, override this to change the endpoint
     // that will be called.
-    url : function() {
-      var base = getValue(this.collection, 'url') || getValue(this, 'urlRoot') || urlError();
+    url: function() {
+      var base = getValue(this, 'urlRoot') || getValue(this.collection, 'url') || urlError();
       if (this.isNew()) return base;
       return base + (base.charAt(base.length - 1) == '/' ? '' : '/') + encodeURIComponent(this.id);
     },
 
     // **parse** converts a response into the hash of attributes to be `set` on
     // the model. The default implementation is just to pass the response along.
-    parse : function(resp, xhr) {
+    parse: function(resp, xhr) {
       return resp;
     },
 
     // Create a new model with identical attributes to this one.
-    clone : function() {
-      return new this.constructor(this);
+    clone: function() {
+      return new this.constructor(this.attributes);
     },
 
     // A model is new if it has never been saved to the server, and lacks an id.
-    isNew : function() {
+    isNew: function() {
       return this.id == null;
     },
 
-    // Call this method to manually fire a `change` event for this model.
+    // Call this method to manually fire a `"change"` event for this model and
+    // a `"change:attribute"` event for each changed attribute.
     // Calling this will cause all objects observing the model to update.
-    change : function(options) {
-      this.trigger('change', this, options);
-      this._previousAttributes = _.clone(this.attributes);
-      this._changed = false;
+    change: function(options) {
+      options || (options = {});
+      var changing = this._changing;
+      this._changing = true;
+
+      // Silent changes become pending changes.
+      for (var attr in this._silent) this._pending[attr] = true;
+
+      // Silent changes are triggered.
+      var changes = _.extend({}, options.changes, this._silent);
+      this._silent = {};
+      for (var attr in changes) {
+        this.trigger('change:' + attr, this, this.get(attr), options);
+      }
+      if (changing) return this;
+
+      // Continue firing `"change"` events while there are pending changes.
+      while (!_.isEmpty(this._pending)) {
+        this._pending = {};
+        this.trigger('change', this, options);
+        // Pending and silent changes still remain.
+        for (var attr in this.changed) {
+          if (this._pending[attr] || this._silent[attr]) continue;
+          delete this.changed[attr];
+        }
+        this._previousAttributes = _.clone(this.attributes);
+      }
+
+      this._changing = false;
+      return this;
     },
 
     // Determine if the model has changed since the last `"change"` event.
     // If you specify an attribute name, determine if that attribute has changed.
-    hasChanged : function(attr) {
-      if (attr) return !_.isEqual(this._previousAttributes[attr], this.attributes[attr]);
-      return this._changed;
+    hasChanged: function(attr) {
+      if (!arguments.length) return !_.isEmpty(this.changed);
+      return _.has(this.changed, attr);
     },
 
     // Return an object containing all the attributes that have changed, or
     // false if there are no changed attributes. Useful for determining what
     // parts of a view need to be updated and/or what attributes need to be
     // persisted to the server. Unset attributes will be set to undefined.
-    changedAttributes : function(now) {
-      if (!this._changed) return false;
-      now || (now = this.attributes);
-      var changed = false, old = this._previousAttributes;
-      for (var attr in now) {
-        if (_.isEqual(old[attr], now[attr])) continue;
-        (changed || (changed = {}))[attr] = now[attr];
-      }
-      for (var attr in old) {
-        if (!(attr in now)) (changed || (changed = {}))[attr] = void 0;
+    // You can also pass an attributes object to diff against the model,
+    // determining if there *would be* a change.
+    changedAttributes: function(diff) {
+      if (!diff) return this.hasChanged() ? _.clone(this.changed) : false;
+      var val, changed = false, old = this._previousAttributes;
+      for (var attr in diff) {
+        if (_.isEqual(old[attr], (val = diff[attr]))) continue;
+        (changed || (changed = {}))[attr] = val;
       }
       return changed;
     },
 
     // Get the previous value of an attribute, recorded at the time the last
     // `"change"` event was fired.
-    previous : function(attr) {
-      if (!attr || !this._previousAttributes) return null;
+    previous: function(attr) {
+      if (!arguments.length || !this._previousAttributes) return null;
       return this._previousAttributes[attr];
     },
 
     // Get all of the attributes of the model at the time of the previous
     // `"change"` event.
-    previousAttributes : function() {
+    previousAttributes: function() {
       return _.clone(this._previousAttributes);
     },
 
-    // Run validation against a set of incoming attributes, returning `true`
-    // if all is well. If a specific `error` callback has been passed,
-    // call that instead of firing the general `"error"` event.
-    _performValidation : function(attrs, options) {
+    // Check if the model is currently in a valid state. It's only possible to
+    // get into an *invalid* state if you're using silent changes.
+    isValid: function() {
+      return !this.validate(this.attributes);
+    },
+
+    // Run validation against the next complete set of model attributes,
+    // returning `true` if all is well. If a specific `error` callback has
+    // been passed, call that instead of firing the general `"error"` event.
+    _validate: function(attrs, options) {
+      if (options.silent || !this.validate) return true;
+      attrs = _.extend({}, this.attributes, attrs);
       var error = this.validate(attrs, options);
-      if (error) {
-        if (options.error) {
-          options.error(this, error, options);
-        } else {
-          this.trigger('error', this, error, options);
-        }
-        return false;
+      if (!error) return true;
+      if (options && options.error) {
+        options.error(this, error, options);
+      } else {
+        this.trigger('error', this, error, options);
       }
-      return true;
+      return false;
     }
 
   });
@@ -14793,66 +15205,89 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   // Provides a standard collection class for our sets of models, ordered
   // or unordered. If a `comparator` is specified, the Collection will maintain
   // its models in sort order, as they're added and removed.
-  Backbone.Collection = function(models, options) {
+  var Collection = Backbone.Collection = function(models, options) {
     options || (options = {});
+    if (options.model) this.model = options.model;
     if (options.comparator) this.comparator = options.comparator;
     this._reset();
     this.initialize.apply(this, arguments);
-    if (models) this.reset(models, {silent: true});
+    if (models) this.reset(models, {silent: true, parse: options.parse});
   };
 
   // Define the Collection's inheritable methods.
-  _.extend(Backbone.Collection.prototype, Backbone.Events, {
+  _.extend(Collection.prototype, Events, {
 
     // The default model for a collection is just a **Backbone.Model**.
     // This should be overridden in most cases.
-    model : Backbone.Model,
+    model: Model,
 
     // Initialize is an empty function by default. Override it with your own
     // initialization logic.
-    initialize : function(){},
+    initialize: function(){},
 
     // The JSON representation of a Collection is an array of the
     // models' attributes.
-    toJSON : function() {
-      return this.map(function(model){ return model.toJSON(); });
+    toJSON: function(options) {
+      return this.map(function(model){ return model.toJSON(options); });
     },
 
     // Add a model, or list of models to the set. Pass **silent** to avoid
-    // firing the `added` event for every new model.
-    add : function(models, options) {
-      var i, index, length;
+    // firing the `add` event for every new model.
+    add: function(models, options) {
+      var i, index, length, model, cid, id, cids = {}, ids = {}, dups = [];
       options || (options = {});
-      if (!_.isArray(models)) models = [models];
-      models = slice.call(models);
+      models = _.isArray(models) ? models.slice() : [models];
+
+      // Begin by turning bare objects into model references, and preventing
+      // invalid models or duplicate models from being added.
       for (i = 0, length = models.length; i < length; i++) {
-        var model = models[i] = this._prepareModel(models[i], options);
-        var hasId = model.id != null;
-        if (this._byCid[model.cid] || (hasId && this._byId[model.id])) {
-          throw new Error("Can't add the same model to a set twice");
+        if (!(model = models[i] = this._prepareModel(models[i], options))) {
+          throw new Error("Can't add an invalid model to a collection");
         }
-        this._byCid[model.cid] = model;
-        if (hasId) this._byId[model.id] = model;
-        model.on('all', this._onModelEvent, this);
+        cid = model.cid;
+        id = model.id;
+        if (cids[cid] || this._byCid[cid] || ((id != null) && (ids[id] || this._byId[id]))) {
+          dups.push(i);
+          continue;
+        }
+        cids[cid] = ids[id] = model;
       }
+
+      // Remove duplicates.
+      i = dups.length;
+      while (i--) {
+        models.splice(dups[i], 1);
+      }
+
+      // Listen to added models' events, and index models for lookup by
+      // `id` and by `cid`.
+      for (i = 0, length = models.length; i < length; i++) {
+        (model = models[i]).on('all', this._onModelEvent, this);
+        this._byCid[model.cid] = model;
+        if (model.id != null) this._byId[model.id] = model;
+      }
+
+      // Insert models into the collection, re-sorting if needed, and triggering
+      // `add` events unless silenced.
       this.length += length;
       index = options.at != null ? options.at : this.models.length;
       splice.apply(this.models, [index, 0].concat(models));
       if (this.comparator) this.sort({silent: true});
       if (options.silent) return this;
-      for (i = 0; i < length; i++) {
-        options.index = index + i;
-        models[i].trigger('add', models[i], this, options);
+      for (i = 0, length = this.models.length; i < length; i++) {
+        if (!cids[(model = this.models[i]).cid]) continue;
+        options.index = i;
+        model.trigger('add', model, this, options);
       }
       return this;
     },
 
     // Remove a model, or a list of models from the set. Pass silent to avoid
-    // firing the `removed` event for every model removed.
-    remove : function(models, options) {
-      var i, index, model;
+    // firing the `remove` event for every model removed.
+    remove: function(models, options) {
+      var i, l, index, model;
       options || (options = {});
-      if (!_.isArray(models)) models = [models];
+      models = _.isArray(models) ? models.slice() : [models];
       for (i = 0, l = models.length; i < l; i++) {
         model = this.getByCid(models[i]) || this.get(models[i]);
         if (!model) continue;
@@ -14870,26 +15305,65 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
       return this;
     },
 
+    // Add a model to the end of the collection.
+    push: function(model, options) {
+      model = this._prepareModel(model, options);
+      this.add(model, options);
+      return model;
+    },
+
+    // Remove a model from the end of the collection.
+    pop: function(options) {
+      var model = this.at(this.length - 1);
+      this.remove(model, options);
+      return model;
+    },
+
+    // Add a model to the beginning of the collection.
+    unshift: function(model, options) {
+      model = this._prepareModel(model, options);
+      this.add(model, _.extend({at: 0}, options));
+      return model;
+    },
+
+    // Remove a model from the beginning of the collection.
+    shift: function(options) {
+      var model = this.at(0);
+      this.remove(model, options);
+      return model;
+    },
+
     // Get a model from the set by id.
-    get : function(id) {
-      if (id == null) return null;
+    get: function(id) {
+      if (id == null) return void 0;
       return this._byId[id.id != null ? id.id : id];
     },
 
     // Get a model from the set by client id.
-    getByCid : function(cid) {
+    getByCid: function(cid) {
       return cid && this._byCid[cid.cid || cid];
     },
 
     // Get the model at the given index.
-    at : function(index) {
+    at: function(index) {
       return this.models[index];
+    },
+
+    // Return models with matching attributes. Useful for simple cases of `filter`.
+    where: function(attrs) {
+      if (_.isEmpty(attrs)) return [];
+      return this.filter(function(model) {
+        for (var key in attrs) {
+          if (attrs[key] !== model.get(key)) return false;
+        }
+        return true;
+      });
     },
 
     // Force the collection to re-sort itself. You don't need to call this under
     // normal circumstances, as the set will maintain sort order as each item
     // is added.
-    sort : function(options) {
+    sort: function(options) {
       options || (options = {});
       if (!this.comparator) throw new Error('Cannot sort a set without a comparator');
       var boundComparator = _.bind(this.comparator, this);
@@ -14903,21 +15377,21 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     },
 
     // Pluck an attribute from each model in the collection.
-    pluck : function(attr) {
+    pluck: function(attr) {
       return _.map(this.models, function(model){ return model.get(attr); });
     },
 
     // When you have more items than you want to add or remove individually,
     // you can reset the entire set with a new list of models, without firing
-    // any `added` or `removed` events. Fires `reset` when finished.
-    reset : function(models, options) {
+    // any `add` or `remove` events. Fires `reset` when finished.
+    reset: function(models, options) {
       models  || (models = []);
       options || (options = {});
       for (var i = 0, l = this.models.length; i < l; i++) {
         this._removeReference(this.models[i]);
       }
       this._reset();
-      this.add(models, {silent: true, parse: options.parse});
+      this.add(models, _.extend({silent: true}, options));
       if (!options.silent) this.trigger('reset', this, options);
       return this;
     },
@@ -14925,7 +15399,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // Fetch the default set of models for this collection, resetting the
     // collection when they arrive. If `add: true` is passed, appends the
     // models to the collection instead of resetting.
-    fetch : function(options) {
+    fetch: function(options) {
       options = options ? _.clone(options) : {};
       if (options.parse === undefined) options.parse = true;
       var collection = this;
@@ -14938,17 +15412,18 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
       return (this.sync || Backbone.sync).call(this, 'read', this, options);
     },
 
-    // Create a new instance of a model in this collection. After the model
-    // has been created on the server, it will be added to the collection.
-    // Returns the model, or 'false' if validation on a new model fails.
-    create : function(model, options) {
+    // Create a new instance of a model in this collection. Add the model to the
+    // collection immediately, unless `wait: true` is passed, in which case we
+    // wait for the server to agree.
+    create: function(model, options) {
       var coll = this;
       options = options ? _.clone(options) : {};
       model = this._prepareModel(model, options);
       if (!model) return false;
+      if (!options.wait) coll.add(model, options);
       var success = options.success;
       options.success = function(nextModel, resp, xhr) {
-        coll.add(nextModel, options);
+        if (options.wait) coll.add(nextModel, options);
         if (success) {
           success(nextModel, resp);
         } else {
@@ -14961,32 +15436,33 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
     // **parse** converts a response into a list of models to be added to the
     // collection. The default implementation is just to pass it through.
-    parse : function(resp, xhr) {
+    parse: function(resp, xhr) {
       return resp;
     },
 
     // Proxy to _'s chain. Can't be proxied the same way the rest of the
     // underscore methods are proxied because it relies on the underscore
     // constructor.
-    chain : function () {
+    chain: function () {
       return _(this.models).chain();
     },
 
     // Reset all internal state. Called when the collection is reset.
-    _reset : function(options) {
+    _reset: function(options) {
       this.length = 0;
       this.models = [];
       this._byId  = {};
       this._byCid = {};
     },
 
-    // Prepare a model to be added to this collection
-    _prepareModel : function(model, options) {
-      if (!(model instanceof Backbone.Model)) {
+    // Prepare a model or hash of attributes to be added to this collection.
+    _prepareModel: function(model, options) {
+      options || (options = {});
+      if (!(model instanceof Model)) {
         var attrs = model;
         options.collection = this;
         model = new this.model(attrs, options);
-        if (model.validate && !model._performValidation(model.attributes, options)) model = false;
+        if (!model._validate(model.attributes, options)) model = false;
       } else if (!model.collection) {
         model.collection = this;
       }
@@ -14994,7 +15470,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     },
 
     // Internal method to remove a model's ties to a collection.
-    _removeReference : function(model) {
+    _removeReference: function(model) {
       if (this == model.collection) {
         delete model.collection;
       }
@@ -15005,12 +15481,12 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // Sets need to update their indexes when models change ids. All other
     // events simply proxy through. "add" and "remove" events that originate
     // in other collections are ignored.
-    _onModelEvent : function(ev, model, collection, options) {
-      if ((ev == 'add' || ev == 'remove') && collection != this) return;
-      if (ev == 'destroy') {
+    _onModelEvent: function(event, model, collection, options) {
+      if ((event == 'add' || event == 'remove') && collection != this) return;
+      if (event == 'destroy') {
         this.remove(model, options);
       }
-      if (model && ev === 'change:' + model.idAttribute) {
+      if (model && event === 'change:' + model.idAttribute) {
         delete this._byId[model.previous(model.idAttribute)];
         this._byId[model.id] = model;
       }
@@ -15028,7 +15504,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
   // Mix in each Underscore method as a proxy to `Collection#models`.
   _.each(methods, function(method) {
-    Backbone.Collection.prototype[method] = function() {
+    Collection.prototype[method] = function() {
       return _[method].apply(_, [this.models].concat(_.toArray(arguments)));
     };
   });
@@ -15038,7 +15514,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
   // Routers map faux-URLs to actions, and fire events when routes are
   // matched. Creating a new one sets its `routes` hash, if not set statically.
-  Backbone.Router = function(options) {
+  var Router = Backbone.Router = function(options) {
     options || (options = {});
     if (options.routes) this.routes = options.routes;
     this._bindRoutes();
@@ -15052,11 +15528,11 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   var escapeRegExp  = /[-[\]{}()+?.,\\^$|#\s]/g;
 
   // Set up all inheritable **Backbone.Router** properties and methods.
-  _.extend(Backbone.Router.prototype, Backbone.Events, {
+  _.extend(Router.prototype, Events, {
 
     // Initialize is an empty function by default. Override it with your own
     // initialization logic.
-    initialize : function(){},
+    initialize: function(){},
 
     // Manually bind a single named route to a callback. For example:
     //
@@ -15064,26 +15540,28 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     //       ...
     //     });
     //
-    route : function(route, name, callback) {
-      Backbone.history || (Backbone.history = new Backbone.History);
+    route: function(route, name, callback) {
+      Backbone.history || (Backbone.history = new History);
       if (!_.isRegExp(route)) route = this._routeToRegExp(route);
+      if (!callback) callback = this[name];
       Backbone.history.route(route, _.bind(function(fragment) {
         var args = this._extractParameters(route, fragment);
         callback && callback.apply(this, args);
         this.trigger.apply(this, ['route:' + name].concat(args));
         Backbone.history.trigger('route', this, name, args);
       }, this));
+      return this;
     },
 
     // Simple proxy to `Backbone.history` to save a fragment into the history.
-    navigate : function(fragment, options) {
+    navigate: function(fragment, options) {
       Backbone.history.navigate(fragment, options);
     },
 
     // Bind all defined routes to `Backbone.history`. We have to reverse the
     // order of the routes here to support behavior where the most general
     // routes can be defined at the bottom of the route map.
-    _bindRoutes : function() {
+    _bindRoutes: function() {
       if (!this.routes) return;
       var routes = [];
       for (var route in this.routes) {
@@ -15096,16 +15574,16 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
     // Convert a route string into a regular expression, suitable for matching
     // against the current location hash.
-    _routeToRegExp : function(route) {
+    _routeToRegExp: function(route) {
       route = route.replace(escapeRegExp, '\\$&')
-                   .replace(namedParam, '([^\/]*)')
+                   .replace(namedParam, '([^\/]+)')
                    .replace(splatParam, '(.*?)');
       return new RegExp('^' + route + '$');
     },
 
     // Given a route, and a URL fragment that it matches, return the array of
     // extracted parameters.
-    _extractParameters : function(route, fragment) {
+    _extractParameters: function(route, fragment) {
       return route.exec(fragment).slice(1);
     }
 
@@ -15116,7 +15594,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
   // Handles cross-browser history management, based on URL fragments. If the
   // browser does not support `onhashchange`, falls back to polling.
-  Backbone.History = function() {
+  var History = Backbone.History = function() {
     this.handlers = [];
     _.bindAll(this, 'checkUrl');
   };
@@ -15128,39 +15606,47 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   var isExplorer = /msie [\w.]+/;
 
   // Has the history handling already been started?
-  var historyStarted = false;
+  History.started = false;
 
   // Set up all inheritable **Backbone.History** properties and methods.
-  _.extend(Backbone.History.prototype, Backbone.Events, {
+  _.extend(History.prototype, Events, {
 
     // The default interval to poll for hash changes, if necessary, is
     // twenty times a second.
     interval: 50,
 
+    // Gets the true hash value. Cannot use location.hash directly due to bug
+    // in Firefox where location.hash will always be decoded.
+    getHash: function(windowOverride) {
+      var loc = windowOverride ? windowOverride.location : window.location;
+      var match = loc.href.match(/#(.*)$/);
+      return match ? match[1] : '';
+    },
+
     // Get the cross-browser normalized URL fragment, either from the URL,
     // the hash, or the override.
-    getFragment : function(fragment, forcePushState) {
+    getFragment: function(fragment, forcePushState) {
       if (fragment == null) {
         if (this._hasPushState || forcePushState) {
           fragment = window.location.pathname;
           var search = window.location.search;
           if (search) fragment += search;
         } else {
-          fragment = window.location.hash;
+          fragment = this.getHash();
         }
       }
-      fragment = decodeURIComponent(fragment.replace(routeStripper, ''));
       if (!fragment.indexOf(this.options.root)) fragment = fragment.substr(this.options.root.length);
-      return fragment;
+      return fragment.replace(routeStripper, '');
     },
 
     // Start the hash change handling, returning `true` if the current URL matches
     // an existing route, and `false` otherwise.
-    start : function(options) {
+    start: function(options) {
+      if (History.started) throw new Error("Backbone.history has already been started");
+      History.started = true;
 
       // Figure out the initial configuration. Do we need an iframe?
       // Is pushState desired ... is it available?
-      if (historyStarted) throw new Error("Backbone.history has already been started");
       this.options          = _.extend({}, {root: '/'}, this.options, options);
       this._wantsHashChange = this.options.hashChange !== false;
       this._wantsPushState  = !!this.options.pushState;
@@ -15168,6 +15654,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
       var fragment          = this.getFragment();
       var docMode           = document.documentMode;
       var oldIE             = (isExplorer.exec(navigator.userAgent.toLowerCase()) && (!docMode || docMode <= 7));
+
       if (oldIE) {
         this.iframe = $('<iframe src="javascript:0" tabindex="-1" />').hide().appendTo('body')[0].contentWindow;
         this.navigate(fragment);
@@ -15180,22 +15667,27 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
       } else if (this._wantsHashChange && ('onhashchange' in window) && !oldIE) {
         $(window).bind('hashchange', this.checkUrl);
       } else if (this._wantsHashChange) {
-        setInterval(this.checkUrl, this.interval);
+        this._checkUrlInterval = setInterval(this.checkUrl, this.interval);
       }
 
       // Determine if we need to change the base url, for a pushState link
       // opened by a non-pushState browser.
       this.fragment = fragment;
-      historyStarted = true;
       var loc = window.location;
       var atRoot  = loc.pathname == this.options.root;
+
+      // If we've started off with a route from a `pushState`-enabled browser,
+      // but we're currently in a browser that doesn't support it...
       if (this._wantsHashChange && this._wantsPushState && !this._hasPushState && !atRoot) {
         this.fragment = this.getFragment(null, true);
         window.location.replace(this.options.root + '#' + this.fragment);
         // Return immediately as browser will do redirect to new url
         return true;
+
+      // Or if we've started out with a hash-based route, but we're currently
+      // in a browser where it could be `pushState`-based instead...
       } else if (this._wantsPushState && this._hasPushState && atRoot && loc.hash) {
-        this.fragment = loc.hash.replace(routeStripper, '');
+        this.fragment = this.getHash().replace(routeStripper, '');
         window.history.replaceState({}, document.title, loc.protocol + '//' + loc.host + this.options.root + this.fragment);
       }
 
@@ -15204,26 +15696,34 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
       }
     },
 
+    // Disable Backbone.history, perhaps temporarily. Not useful in a real app,
+    // but possibly useful for unit testing Routers.
+    stop: function() {
+      $(window).unbind('popstate', this.checkUrl).unbind('hashchange', this.checkUrl);
+      clearInterval(this._checkUrlInterval);
+      History.started = false;
+    },
+
     // Add a route to be tested when the fragment changes. Routes added later
     // may override previous routes.
-    route : function(route, callback) {
-      this.handlers.unshift({route : route, callback : callback});
+    route: function(route, callback) {
+      this.handlers.unshift({route: route, callback: callback});
     },
 
     // Checks the current URL to see if it has changed, and if it has,
     // calls `loadUrl`, normalizing across the hidden iframe.
-    checkUrl : function(e) {
+    checkUrl: function(e) {
       var current = this.getFragment();
-      if (current == this.fragment && this.iframe) current = this.getFragment(this.iframe.location.hash);
-      if (current == this.fragment || current == decodeURIComponent(this.fragment)) return false;
+      if (current == this.fragment && this.iframe) current = this.getFragment(this.getHash(this.iframe));
+      if (current == this.fragment) return false;
       if (this.iframe) this.navigate(current);
-      this.loadUrl() || this.loadUrl(window.location.hash);
+      this.loadUrl() || this.loadUrl(this.getHash());
     },
 
     // Attempt to load the current URL fragment. If a route succeeds with a
     // match, returns `true`. If no defined routes matches the fragment,
     // returns `false`.
-    loadUrl : function(fragmentOverride) {
+    loadUrl: function(fragmentOverride) {
       var fragment = this.fragment = this.getFragment(fragmentOverride);
       var matched = _.any(this.handlers, function(handler) {
         if (handler.route.test(fragment)) {
@@ -15240,24 +15740,33 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     //
     // The options object can contain `trigger: true` if you wish to have the
     // route callback be fired (not usually desirable), or `replace: true`, if
-    // you which to modify the current URL without adding an entry to the history.
-    navigate : function(fragment, options) {
+    // you wish to modify the current URL without adding an entry to the history.
+    navigate: function(fragment, options) {
+      if (!History.started) return false;
       if (!options || options === true) options = {trigger: options};
       var frag = (fragment || '').replace(routeStripper, '');
-      if (this.fragment == frag || this.fragment == decodeURIComponent(frag)) return;
+      if (this.fragment == frag) return;
+
+      // If pushState is available, we use it to set the fragment as a real URL.
       if (this._hasPushState) {
         if (frag.indexOf(this.options.root) != 0) frag = this.options.root + frag;
         this.fragment = frag;
         window.history[options.replace ? 'replaceState' : 'pushState']({}, document.title, frag);
+
+      // If hash changes haven't been explicitly disabled, update the hash
+      // fragment to store history.
       } else if (this._wantsHashChange) {
         this.fragment = frag;
         this._updateHash(window.location, frag, options.replace);
-        if (this.iframe && (frag != this.getFragment(this.iframe.location.hash))) {
+        if (this.iframe && (frag != this.getFragment(this.getHash(this.iframe)))) {
           // Opening and closing the iframe tricks IE7 and earlier to push a history entry on hash-tag change.
           // When replace is true, we don't want this.
           if(!options.replace) this.iframe.document.open().close();
           this._updateHash(this.iframe.location, frag, options.replace);
         }
+
+      // If you've told us that you explicitly don't want fallback hashchange-
+      // based history, then `navigate` becomes a page refresh.
       } else {
         window.location.assign(this.options.root + fragment);
       }
@@ -15280,7 +15789,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
 
   // Creating a Backbone.View creates its initial element outside of the DOM,
   // if an existing element is not provided...
-  Backbone.View = function(options) {
+  var View = Backbone.View = function(options) {
     this.cid = _.uniqueId('view');
     this._configure(options || {});
     this._ensureElement();
@@ -15289,38 +15798,38 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   };
 
   // Cached regex to split keys for `delegate`.
-  var eventSplitter = /^(\S+)\s*(.*)$/;
+  var delegateEventSplitter = /^(\S+)\s*(.*)$/;
 
   // List of view options to be merged as properties.
   var viewOptions = ['model', 'collection', 'el', 'id', 'attributes', 'className', 'tagName'];
 
   // Set up all inheritable **Backbone.View** properties and methods.
-  _.extend(Backbone.View.prototype, Backbone.Events, {
+  _.extend(View.prototype, Events, {
 
     // The default `tagName` of a View's element is `"div"`.
-    tagName : 'div',
+    tagName: 'div',
 
     // jQuery delegate for element lookup, scoped to DOM elements within the
     // current view. This should be prefered to global lookups where possible.
-    $ : function(selector) {
-      return (selector == null) ? $(this.el) : $(selector, this.el);
+    $: function(selector) {
+      return this.$el.find(selector);
     },
 
     // Initialize is an empty function by default. Override it with your own
     // initialization logic.
-    initialize : function(){},
+    initialize: function(){},
 
     // **render** is the core function that your view should override, in order
     // to populate its element (`this.el`), with the appropriate HTML. The
     // convention is for **render** to always return `this`.
-    render : function() {
+    render: function() {
       return this;
     },
 
     // Remove this view from the DOM. Note that the view isn't present in the
     // DOM by default, so calling this method may be a no-op.
-    remove : function() {
-      $(this.el).remove();
+    remove: function() {
+      this.$el.remove();
       return this;
     },
 
@@ -15329,11 +15838,21 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     //
     //     var el = this.make('li', {'class': 'row'}, this.model.escape('title'));
     //
-    make : function(tagName, attributes, content) {
+    make: function(tagName, attributes, content) {
       var el = document.createElement(tagName);
       if (attributes) $(el).attr(attributes);
-      if (content) $(el).html(content);
+      if (content != null) $(el).html(content);
       return el;
+    },
+
+    // Change the view's element (`this.el` property), including event
+    // re-delegation.
+    setElement: function(element, delegate) {
+      if (this.$el) this.undelegateEvents();
+      this.$el = (element instanceof $) ? element : $(element);
+      this.el = this.$el[0];
+      if (delegate !== false) this.delegateEvents();
+      return this;
     },
 
     // Set callbacks, where `this.events` is a hash of
@@ -15351,34 +15870,36 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // Omitting the selector binds the event to `this.el`.
     // This only works for delegate-able events: not `focus`, `blur`, and
     // not `change`, `submit`, and `reset` in Internet Explorer.
-    delegateEvents : function(events) {
+    delegateEvents: function(events) {
       if (!(events || (events = getValue(this, 'events')))) return;
       this.undelegateEvents();
       for (var key in events) {
         var method = events[key];
         if (!_.isFunction(method)) method = this[events[key]];
-        if (!method) throw new Error('Event "' + events[key] + '" does not exist');
-        var match = key.match(eventSplitter);
+        if (!method) throw new Error('Method "' + events[key] + '" does not exist');
+        var match = key.match(delegateEventSplitter);
         var eventName = match[1], selector = match[2];
         method = _.bind(method, this);
         eventName += '.delegateEvents' + this.cid;
         if (selector === '') {
-          $(this.el).bind(eventName, method);
+          this.$el.bind(eventName, method);
         } else {
-          $(this.el).delegate(selector, eventName, method);
+          this.$el.delegate(selector, eventName, method);
         }
       }
     },
 
     // Clears all callbacks previously bound to the view with `delegateEvents`.
-    undelegateEvents : function() {
-      $(this.el).unbind('.delegateEvents' + this.cid);
+    // You usually don't need to use this, but may wish to if you have multiple
+    // Backbone views attached to the same DOM element.
+    undelegateEvents: function() {
+      this.$el.unbind('.delegateEvents' + this.cid);
     },
 
     // Performs the initial configuration of a View with a set of options.
     // Keys with special meaning *(model, collection, id, className)*, are
     // attached directly to the view.
-    _configure : function(options) {
+    _configure: function(options) {
       if (this.options) options = _.extend({}, this.options, options);
       for (var i = 0, l = viewOptions.length; i < l; i++) {
         var attr = viewOptions[i];
@@ -15391,14 +15912,14 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // If `this.el` is a string, pass it through `$()`, take the first
     // matching element, and re-assign it to `el`. Otherwise, create
     // an element from the `id`, `className` and `tagName` properties.
-    _ensureElement : function() {
+    _ensureElement: function() {
       if (!this.el) {
         var attrs = getValue(this, 'attributes') || {};
         if (this.id) attrs.id = this.id;
         if (this.className) attrs['class'] = this.className;
-        this.el = this.make(this.tagName, attrs);
-      } else if (_.isString(this.el)) {
-        this.el = $(this.el).get(0);
+        this.setElement(this.make(this.tagName, attrs), false);
+      } else {
+        this.setElement(this.el, false);
       }
     }
 
@@ -15412,19 +15933,18 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   };
 
   // Set up inheritance for the model, collection, and view.
-  Backbone.Model.extend = Backbone.Collection.extend =
-    Backbone.Router.extend = Backbone.View.extend = extend;
+  Model.extend = Collection.extend = Router.extend = View.extend = extend;
+
+  // Backbone.sync
+  // -------------
 
   // Map from CRUD to HTTP for our default `Backbone.sync` implementation.
   var methodMap = {
     'create': 'POST',
     'update': 'PUT',
     'delete': 'DELETE',
-    'read'  : 'GET'
+    'read':   'GET'
   };
-
-  // Backbone.sync
-  // -------------
 
   // Override this function to change the manner in which Backbone persists
   // models to the server. You will be passed the type of request, and the
@@ -15444,8 +15964,11 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   Backbone.sync = function(method, model, options) {
     var type = methodMap[method];
 
+    // Default options, unless specified.
+    options || (options = {});
+
     // Default JSON-request options.
-    var params = {type : type, dataType : 'json'};
+    var params = {type: type, dataType: 'json'};
 
     // Ensure that we have a URL.
     if (!options.url) {
@@ -15461,7 +15984,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     // For older servers, emulate JSON by encoding the request into an HTML-form.
     if (Backbone.emulateJSON) {
       params.contentType = 'application/x-www-form-urlencoded';
-      params.data = params.data ? {model : params.data} : {};
+      params.data = params.data ? {model: params.data} : {};
     }
 
     // For older servers, emulate HTTP by mimicking the HTTP method with `_method`
@@ -15488,11 +16011,11 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
   // Wrap an optional error callback with a fallback error event.
   Backbone.wrapError = function(onError, originalModel, options) {
     return function(model, resp) {
-      var resp = model === originalModel ? resp : model;
+      resp = model === originalModel ? resp : model;
       if (onError) {
-        onError(model, resp, options);
+        onError(originalModel, resp, options);
       } else {
-        originalModel.trigger('error', model, resp, options);
+        originalModel.trigger('error', originalModel, resp, options);
       }
     };
   };
@@ -15515,7 +16038,7 @@ if ( typeof define === "function" && define.amd && define.amd.jQuery ) {
     if (protoProps && protoProps.hasOwnProperty('constructor')) {
       child = protoProps.constructor;
     } else {
-      child = function(){ return parent.apply(this, arguments); };
+      child = function(){ parent.apply(this, arguments); };
     }
 
     // Inherit class (static) properties from parent.
@@ -15667,94 +16190,111 @@ define('views/app',['require','underscore','jquery','backbone'],function( requir
 
 });
 
-define('backbone/localstorage',['underscore', 'backbone'], function(_, Backbone){
-
 // A simple module to replace `Backbone.sync` with *localStorage*-based
 // persistence. Models are given GUIDS, and saved into a JSON object. Simple
 // as that.
 
-// Generate four random hex digits.
-function S4() {
-   return (((1+Math.random())*0x10000)|0).toString(16).substring(1);
-};
-
-// Generate a pseudo-GUID by concatenating random hexadecimal.
-function guid() {
-   return (S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4());
-};
-
-// Our Store is represented by a single JS object in *localStorage*. Create it
-// with a meaningful name, like the name you'd give a table.
-var Store = function(name) {
-  this.name = name;
-  var store = localStorage.getItem(this.name);
-  this.data = (store && JSON.parse(store)) || {};
-};
-
-_.extend(Store.prototype, {
-
-  // Save the current state of the **Store** to *localStorage*.
-  save: function() {
-    localStorage.setItem(this.name, JSON.stringify(this.data));
-  },
-
-  // Add a model, giving it a (hopefully)-unique GUID, if it doesn't already
-  // have an id of it's own.
-  create: function(model) {
-    if (!model.id) model.id = model.attributes.id = guid();
-    this.data[model.id] = model;
-    this.save();
-    return model;
-  },
-
-  // Update a model by replacing its copy in `this.data`.
-  update: function(model) {
-    this.data[model.id] = model;
-    this.save();
-    return model;
-  },
-
-  // Retrieve a model from `this.data` by id.
-  find: function(model) {
-    return this.data[model.id];
-  },
-
-  // Return the array of all models currently in storage.
-  findAll: function() {
-    return _.values(this.data);
-  },
-
-  // Delete a model from `this.data`, returning it.
-  destroy: function(model) {
-    delete this.data[model.id];
-    this.save();
-    return model;
-  }
-
-});
-
-// Override `Backbone.sync` to use delegate to the model or collection's
-// *localStorage* property, which should be an instance of `Store`.
-Backbone.sync = function(method, model, options) {
-
-  var resp;
-  var store = model.localStorage || model.collection.localStorage;
-
-  switch (method) {
-    case "read":    resp = model.id ? store.find(model) : store.findAll(); break;
-    case "create":  resp = store.create(model);                            break;
-    case "update":  resp = store.update(model);                            break;
-    case "delete":  resp = store.destroy(model);                           break;
-  }
-
-  if (resp) {
-    options.success(resp);
+(function(root, factory) {
+  // Set up Backbone appropriately for the environment.
+  if (typeof define === 'function' && define.amd) {
+    // AMD
+    define('backbone/localstorage',['underscore', 'backbone'], function(_, Backbone) {
+      // Export global even in AMD case in case this script is loaded with others
+      return root.Store = factory(root, _, Backbone);
+    });
   } else {
-    options.error("Record not found");
+    // Browser globals
+    root.Store = factory(root, _, Backbone);
   }
-};
-return Store;
-});
+}(this, function(root, _, Backbone) {
+    
+
+    // Generate four random hex digits.
+    function S4() {
+        return (((1+Math.random())*0x10000)|0).toString(16).substring(1);
+    };
+
+    // Generate a pseudo-GUID by concatenating random hexadecimal.
+    function guid() {
+        return (S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4());
+    };
+
+    // Our Store is represented by a single JS object in *localStorage*. Create it
+    // with a meaningful name, like the name you'd give a table.
+    var Store = function(name) {
+        this.name = name;
+        var store = localStorage.getItem(this.name);
+        this.data = (store && JSON.parse(store)) || {};
+    };
+
+    _.extend(Store.prototype, {
+
+        // Save the current state of the **Store** to *localStorage*.
+        save: function() {
+            localStorage.setItem(this.name, JSON.stringify(this.data));
+        },
+
+        // Add a model, giving it a (hopefully)-unique GUID, if it doesn't already
+        // have an id of it's own.
+        create: function(model) {
+            if (!model.id) model.id = model.attributes.id = guid();
+            this.data[model.id] = model.toJSON();
+            this.save();
+            return model;
+        },
+
+        // Update a model by replacing its copy in `this.data`.
+        update: function(model) {
+            this.data[model.id] = model.toJSON();
+            this.save();
+            return model;
+        },
+
+        // Retrieve a model from `this.data` by id.
+        find: function(model) {
+            return this.data[model.id];
+        },
+
+        // Return the array of all models currently in storage.
+        findAll: function() {
+            return _.values(this.data);
+        },
+
+        // Delete a model from `this.data`, returning it.
+        destroy: function(model) {
+            delete this.data[model.id];
+            this.save();
+            return model;
+        }
+
+    });
+
+    // Override `Backbone.sync` to use delegate to the model or collection's
+    // *localStorage* property, which should be an instance of `Store`.
+    Backbone.sync = function(method, model, options) {
+
+        var resp;
+        var store = model.localStorage || model.collection.localStorage;
+
+        switch (method) {
+            case "read":    resp = model.id ? store.find(model) : store.findAll(); break;
+            case "create":  resp = store.create(model);                            break;
+            case "update":  resp = store.update(model);                            break;
+            case "delete":  resp = store.destroy(model);                           break;
+        }
+
+        if (resp) {
+            options.success(resp);
+        } else {
+            options.error("Record not found");
+        }
+    };
+
+
+    return Store;
+}));
+
+
 
 define('collections/todos',['require','backbone','underscore','when','backbone/localstorage'],function( require ) {
 
@@ -15776,6 +16316,8 @@ define('collections/todos',['require','backbone','underscore','when','backbone/l
     create: function( attributes ) {
 
       var self = this;
+
+      console.log( '***PASSED IN MIXIN:', { 'todo_attributes': attributes } );
 
       // Run the function created in our wiring spec, to create necessary objects
       // Pass in our attributes so they can be used in the creation of the model
@@ -15819,7 +16361,7 @@ define('collections/todos',['require','backbone','underscore','when','backbone/l
     },
 
     // Save all of the todo items under the `"todos"` namespace.
-    localStorage: new Store("todos-backbone-curl-wire"),
+    localStorage: new Store("todos-backbone-require-wire"),
 
     // Filter down the list of all todo items that are finished.
     done: function() {
@@ -15971,6 +16513,10 @@ define('models/todo',['require','backbone'],function( require ) {
   // Todo Model
   return Backbone.Model.extend({
 
+    initialize: function( attrs, options ) {
+      console.log( '***RECEIVED: "todo_attributes"', attrs );
+    },
+
     // Default attributes for the todo
     defaults: {
       content: "empty todo...",
@@ -16026,6 +16572,8 @@ define('specs/todo',{
 
         // Attributes
         { $ref: 'todo_attributes' }, // Set the models initial attributes to those passed into the wire spec
+        // OR
+        // [], // This works, but has empty attrs
 
         // Options
         {
@@ -16053,16 +16601,19 @@ define('specs/todo',{
     },
 
     // Save model to localstorage after creating it
-    init: 'save'
+    init: {
+      'save': []
+    }
   },
 
   plugins: [
-    //{ module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
+    { module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
     { module: 'wire/backbone/events' }
   ]
 
 } );
 
+define('wire/debug',[], function() {});
 /**
  * @license RequireJS domReady 1.0.0 Copyright (c) 2010-2011, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
@@ -16233,52 +16784,369 @@ define('wire/domReady',[],function () {
 
     return domReady;
 });
-/**
- * @license Copyright (c) 2010-2011 Brian Cavalier
- * LICENSE: see the LICENSE.txt file. If file is missing, this file is subject
- * to the MIT License at: http://www.opensource.org/licenses/mit-license.php.
- */
+
+/** @license MIT License (c) copyright B Cavalier & J Hann */
 
 /**
- * dom.js
+ * dom plugin helper
+ *
+ * wire is part of the cujo.js family of libraries (http://cujojs.com/)
+ *
+ * Licensed under the MIT License at:
+ * http://www.opensource.org/licenses/mit-license.php
  */
-define('wire/jquery/dom',['jquery', 'wire/domReady'], function(jquery, domReady) {
 
-    function resolveQuery(resolver, name, refObj /*, wire */) {
+define('wire/plugin-base/dom',['wire/domReady', 'when'], function(domReady, when) {
 
-        domReady(function() {
-            var result, i;
+	function defaultById(id) {
+		return document.getElementById(id);
+	}
 
-            result = jQuery(name);
-            i = refObj.i;
+	function defaultQueryAll(selector, root) {
+		return (root||document).querySelectorAll(selector);
+	}
 
-            if (typeof i == 'number') {
-                if (i < result.length) {
-                    resolver.resolve(result[i]);
-                } else {
-                    resolver.reject(new Error("Query '" + name + "' returned " + result.length + " items while expecting at least " + (refObj.i + 1)));
-                }
-            } else {
-                resolver.resolve(jQuery.makeArray(result));
-            }
-        });
+	function defaultQuery(selector, root) {
+		return (root||document).querySelector(selector);
+	}
 
-    }
+	/**
+	 * Places a node into the DOM at the location specified around
+	 * a reference node.
+	 * Note: replace is problematic if the dev expects to use the node
+	 * as a wire component.  The component reference will still point
+	 * at the node that was replaced.
+	 * @private
+	 * @param node {HTMLElement}
+	 * @param refNode {HTMLElement}
+	 * @param location {String} or {Number} "before", "after", "first", "last",
+	 *   or the position within the children of refNode
+	 */
+	function defaultPlaceAt(node, refNode, location) {
+		var parent;
 
-    /**
-     * The plugin instance.  Can be the same for all wiring runs
-     */
-    var plugin = {
-        resolvers: {
-            'dom.query': resolveQuery
-        }
-    };
+		parent = refNode.parentNode;
 
-    return {
-        wire$plugin: function(/*ready, destroyed, options*/) {
-            return plugin;
-        }
-    };
+		// `if else` is more compressible than switch
+		if (!isNaN(location)) {
+			// IE craoks if location is out of bounds
+			location = Math.min(Math.max(location, 0), refNode.childNodes.length);
+			_insertBefore(refNode, node, refNode.childNodes[location]);
+		}
+		else if(location == 'at') {
+			refNode.innerHTML = '';
+			_appendChild(refNode, node);
+		}
+		else if(location == 'last') {
+			_appendChild(refNode, node);
+		}
+		else if(location == 'first') {
+			_insertBefore(refNode, node, refNode.firstChild);
+		}
+		else if(location == 'before') {
+			// TODO: throw if parent missing?
+			_insertBefore(parent, node, refNode);
+		}
+		else if(location == 'after') {
+			// TODO: throw if parent missing?
+			if (refNode == parent.lastChild) {
+				_appendChild(parent, node);
+			}
+			else {
+				_insertBefore(parent, node, refNode.nextSibling);
+			}
+		}
+		else {
+			throw new Error('Unknown dom insertion command: ' + location);
+		}
+
+		return node;
+	}
+
+	// these are for better compressibility since compressors won't
+	// compress native DOM methods.
+	function _insertBefore(parent, node, refNode) {
+		if (!refNode) _appendChild(parent, node); // IE needs this
+		else parent.insertBefore(node, refNode);
+	}
+
+	function _appendChild(parent, node) {
+		parent.appendChild(node);
+	}
+
+	return function createDomPlugin(options) {
+
+		var getById, query, first, init, addClass, removeClass, placeAt;
+
+		getById = options.byId || defaultById;
+		query = options.query || defaultQueryAll;
+		first = options.first || defaultQuery;
+		init = options.init;
+
+		addClass = options.addClass;
+		removeClass = options.removeClass;
+
+		placeAt = options.placeAt || defaultPlaceAt;
+
+		function doById(resolver, name /*, refObj, wire*/) {
+
+			domReady(function() {
+				var node;
+				// if dev omitted name, they're looking for the resolver itself
+				if (!name) resolver.resolve(getById);
+				node = getById(name);
+				if (node) {
+					resolver.resolve(node);
+				} else {
+					resolver.reject(new Error("No DOM node with id: " + name));
+				}
+			});
+		}
+
+		function doQuery(name, refObj, root, queryFunc) {
+			var result, i;
+
+			result = queryFunc(name, root);
+
+			// if dev supplied i, try to use it
+			if (typeof refObj.i != 'undefined') {
+				i = refObj.i;
+				if (result[i]) { // do not use `i in result` since IE gives a false positive
+					return result[i];
+				} else {
+					throw new Error("Query '" + name + "' did not find an item at position " + i);
+				}
+			} else if (queryFunc == first && !result) {
+				throw new Error("Query '" + name + "' did not find anything");
+			} else {
+				return result;
+			}
+		}
+
+		function doPlaceAt(resolver, facet, wire) {
+			domReady(function() {
+				var futureRefNode, node, options, operation;
+
+				options = facet.options;
+				node = facet.target;
+
+				// get first property and use it as the operation
+				for (var p in options) {
+					if (options.hasOwnProperty(p)) {
+						operation = p;
+						break;
+					}
+				}
+
+				futureRefNode = wire(makeQueryRef(options[operation]));
+
+				when(futureRefNode, function (refNode) {
+					return placeAt(node, refNode, operation);
+				}).then(resolver.resolve, resolver.reject);
+			});
+		}
+
+		/**
+		 *
+		 * @param resolver {Resolver} resolver to notify when the ref has been resolved
+		 * @param name {String} the dom query
+		 * @param refObj {Object} the full reference object, including options
+		 * @param wire {Function} wire()
+		 * @param [queryFunc] {Function} the function to use to query the dom
+		 */
+		function resolveQuery(resolver, name, refObj, wire, queryFunc) {
+
+			if (!queryFunc) queryFunc = query;
+
+			domReady(function() {
+
+				var futureRoot;
+
+				// if dev omitted name, they're looking for the resolver itself
+				if (!name) return resolver.resolve(queryFunc);
+
+				// get string ref or object ref
+				if (refObj.at && !refObj.isRoot) {
+					futureRoot = wire(makeQueryRoot(refObj.at));
+				}
+
+				// sizzle will default to document if refObj.at is unspecified
+				when(futureRoot, function (root) {
+					return doQuery(name, refObj, root, queryFunc);
+				}).then(resolver.resolve, resolver.reject);
+
+			});
+
+		}
+
+		/**
+		 * dom.first! resolver.
+		 *
+		 * @param resolver {Resolver} resolver to notify when the ref has been resolved
+		 * @param name {String} the dom query
+		 * @param refObj {Object} the full reference object, including options
+		 * @param wire {Function} wire()
+		 */
+		function resolveFirst(resolver, name, refObj, wire) {
+			resolveQuery(resolver, name, refObj, wire, first);
+		}
+
+		function makeQueryRoot(ref) {
+
+			var root = makeQueryRef(ref);
+
+			if(root) {
+				root.isRoot = true;
+			}
+
+			return root;
+		}
+
+		function makeQueryRef(ref) {
+			return typeof ref == 'string' ? { $ref: ref } : ref;
+		}
+
+		function createResolver(resolverFunc, options) {
+			return function(resolver, name, refObj, wire) {
+				if(!refObj.at) {
+					refObj.at = options.at;
+				} else {
+					refObj.at = makeQueryRoot(refObj.at);
+				}
+
+				return resolverFunc(resolver, name, refObj, wire);
+			}
+		}
+
+		function handleClasses(node, add, remove) {
+			if(add) addClass(node, add);
+			if(remove) removeClass(node, remove);
+		}
+
+		return {
+			wire$plugin: function(ready, destroyed, options) {
+				var classes, resolvers, facets;
+
+				options.at = makeQueryRoot(options.at);
+
+				if (init) init(ready, destroyed, options);
+
+				classes = options.classes;
+
+				// Add/remove lifecycle classes if specified
+				if (classes) {
+					domReady(function () {
+						var node = document.getElementsByTagName('html')[0];
+
+						// Add classes for wiring start
+						handleClasses(node, classes.init);
+
+						// Add/remove classes for context ready
+						ready.then(function () {
+							handleClasses(node, classes.ready, classes.init);
+						});
+
+						if (classes.ready) {
+							// Remove classes for context destroyed
+							destroyed.then(function () {
+								handleClasses(node, null, classes.ready);
+							});
+						}
+					});
+				}
+
+				resolvers = {
+					'dom': doById
+				};
+
+				facets = {
+					'insert': {
+						initialize: doPlaceAt
+					}
+				};
+
+				if (query) {
+					resolvers['dom.first'] = createResolver(resolveFirst, options);
+
+					// dom.all and dom.query are synonyms
+					resolvers['dom.all']
+						= resolvers['dom.query'] = createResolver(resolveQuery, options);
+				}
+
+				return {
+					resolvers: resolvers,
+					facets: facets
+				};
+
+			}
+		};
+	}
+});
+
+/** @license MIT License (c) copyright B Cavalier & J Hann */
+
+/**
+ * wire/jquery/dom plugin
+ * jQuery-based dom! resolver
+ *
+ * wire is part of the cujo.js family of libraries (http://cujojs.com/)
+ *
+ * Licensed under the MIT License at:
+ * http://www.opensource.org/licenses/mit-license.php
+ */
+
+define('wire/jquery/dom',['../plugin-base/dom', 'jquery'], function(createDomPlugin, jquery) {
+
+	return createDomPlugin({
+		query: function (selector, root) {
+			return jquery(selector, root).toArray();
+		},
+		first: function (selector, root) {
+			return jquery(selector, root)[0];
+		},
+		addClass: function(node, cls) {
+			jquery(node).addClass(cls);
+		},
+		removeClass: function(node, cls) {
+			jquery(node).removeClass(cls);
+		},
+		placeAt: function (node, refNode, location) {
+			var $refNode, $children;
+			$refNode = jquery(refNode);
+			// `if else` is more compressible than switch
+			if (!isNaN(location)) {
+				$children = $(refNode).children();
+				if (location <= 0) {
+					$refNode.prepend(node);
+				}
+				else if (location >= $children.length) {
+					$refNode.append(node);
+				}
+				else {
+					$children.eq(location).before(node);
+				}
+			}
+			else if (location == 'at') {
+				$refNode.empty().append(node);
+			}
+			else if (location == 'last') {
+				$refNode.append(node);
+			}
+			else if (location == 'first') {
+				$refNode.prepend(node);
+			}
+			else if (location == 'before') {
+				$refNode.before(node);
+			}
+			else if (location == 'after') {
+				$refNode.after(node);
+			}
+			else {
+				throw new Error('Unknown dom insertion command: ' + location);
+			}
+			return node;
+		}
+	});
 
 });
 
@@ -16318,10 +17186,10 @@ define('wire/backbone/events',[], function() {
 				if ( !backbone_obj || typeof backbone_obj.bind != 'function' ) return;
 
 
-				backbone_obj.bind( eventName, callback, context );
+				backbone_obj.on( eventName, callback, context );
 
 				event_handlers.push( function unbind() {
-					backbone_obj.unbind( eventName, callback );
+					backbone_obj.off( eventName, callback );
 				} );
 			}
 			
@@ -16438,7 +17306,7 @@ define('specs/main',{
   },
 
   plugins: [
-    //{ module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
+    { module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
     { module: 'wire/jquery/dom' },
     { module: 'wire/backbone/events' }
   ]

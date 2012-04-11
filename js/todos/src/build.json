@@ -6,16 +6,16 @@
 
 	"optimize": "none",
 
-    // inlining ftw
-    "inlineText": true,
+		// inlining ftw
+		"inlineText": true,
 
-    // kills unneeded plugin code on build
-    "pragmasOnSave": {
+		// kills unneeded plugin code on build
+		"pragmasOnSave": {
 		"excludeAfterBuild": true
-    },
+		},
 
-    // Set app locale (not used)
-    "locale": "en_us",
+		// Set app locale (not used)
+		"locale": "en_us",
 
 	"urlArgs": "",
 
@@ -24,11 +24,12 @@
 
 	"paths": {
 		// Use our r.js builder plugin
-		"wire/cram/builder": "../../_libs/requirejs/plugins/wire",
+		"wire/build/amd/builder": "../../_libs/wire_080-rc/rjs/builder",
+		"wire/debug": "../../_libs/wire_080-rc/plugin-base/live", // Override debug for built mode
 
-		"wire/domReady": "../../_libs/requirejs/plugins/domReady",
+		"wire/domReady": "../../_libs/requirejs_107/domReady",
 		
-		"hbs": '../../_libs/handlebars/hbs'
+		"hbs": "../../_libs/handlebars/hbs"
 	},
 
 	"modules": [
