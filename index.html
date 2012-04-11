@@ -4,7 +4,8 @@
 	<title>Todo App - Backbone - Require - Wire - Thomas Davis</title>
 	<link rel="stylesheet" href="css/todos.css">
 
-	<script src="js/_libs/requirejs/require.js"></script>
+	<!-- <script src="js/_libs/requirejs/require.js"></script> -->
+	<script src="js/_libs/requirejs_107/require.js"></script>
 
 	<script>
 	if ( window.location.hash === '#dev' ) { // Is dev mode
@@ -14,7 +15,8 @@
 		require.config( {
 			baseUrl: 'js/todos/build',
 			paths: {
-				"text": "../../_libs/requirejs/plugins/text"
+				//"text": "../../_libs/requirejs/plugins/text"
+				"text": "../../_libs/requirejs_107/text"
 			}
 		} );
 

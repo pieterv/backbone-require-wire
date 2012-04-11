@@ -1,15 +1,15 @@
-/**
- * @license Copyright (c) 2011 Brian Cavalier
- * LICENSE: see the LICENSE.txt file. If file is missing, this file is subject
- * to the MIT License at: http://www.opensource.org/licenses/mit-license.php.
- */
+/** @license MIT License (c) copyright B Cavalier & J Hann */
 
 /**
- * when.js
+ * when
  * A lightweight CommonJS Promises/A and when() implementation
  *
- * @version 0.10.4
- * @author brian@hovercraftstudios.com
+ * when is part of the cujo.js family of libraries (http://cujojs.com/)
+ *
+ * Licensed under the MIT License at:
+ * http://www.opensource.org/licenses/mit-license.php
+ *
+ * @version 1.0.0
  */
 
 (function(define) {
@@ -88,6 +88,13 @@ define(function() {
         };
 
     /**
+     * Trusted Promise constructor.  A Promise created from this constructor is
+     * a trusted when.js promise.  Any other duck-typed promise is considered
+     * untrusted.
+     */
+    function Promise() {}
+
+    /**
      * Creates a new, CommonJS compliant, Deferred with fully isolated
      * resolver and promise parts, either or both of which may be given out
      * safely to consumers.
@@ -101,7 +108,7 @@ define(function() {
      * @returns {Deferred}
      */
     function defer() {
-        var deferred, promise, resolver, result, listeners, progressHandlers, _then, _progress, complete;
+        var deferred, promise, result, listeners, progressHandlers, _then, _progress, complete;
 
         listeners = [];
         progressHandlers = [];
@@ -115,29 +122,44 @@ define(function() {
          * @param [callback] {Function} resolution handler
          * @param [errback] {Function} rejection handler
          * @param [progback] {Function} progress handler
+         *
+         * @throws {Error} if any argument is not null, undefined, or a Function
          */
         _then = function unresolvedThen(callback, errback, progback) {
-            var d = defer();
+            // Check parameters and fail immediately if any supplied parameter
+            // is not null/undefined and is also not a function.
+            // That is, any non-null/undefined parameter must be a function.
+            var arg, deferred, i = arguments.length;
+            while(i) {
+                arg = arguments[--i];
+                if (arg != null && typeof arg != 'function') throw new Error('callback is not a function');
+            }
+
+            deferred = defer();
 
             listeners.push({
-                deferred: d,
+                deferred: deferred,
                 resolve: callback,
                 reject: errback
             });
 
             progback && progressHandlers.push(progback);
 
-            return d.promise;
+            return deferred.promise;
         };
 
         /**
-         * Registers a handler for this {@link Deferred}'s {@link Promise}
+         * Registers a handler for this {@link Deferred}'s {@link Promise}.  Even though all arguments
+         * are optional, each argument that *is* supplied must be null, undefined, or a Function.
+         * Any other value will cause an Error to be thrown.
          *
          * @memberOf Promise
          *
-         * @param callback {Function}
-         * @param [errback] {Function}
-         * @param [progback] {Function}
+         * @param [callback] {Function} resolution handler
+         * @param [errback] {Function} rejection handler
+         * @param [progback] {Function} progress handler
+         *
+         * @throws {Error} if any argument is not null, undefined, or a Function
          */
         function then(callback, errback, progback) {
             return _then(callback, errback, progback);
@@ -260,10 +282,13 @@ define(function() {
 
                     newResult = handler ? handler(result) : result;
 
+                    // NOTE: isPromise is also called by promise(), which is called by when(),
+                    // resulting in 2 calls to isPromise here.  It's harmless, but need to
+                    // refactor to avoid that.
                     if (isPromise(newResult)) {
                         // If the handler returned a promise, chained deferreds
                         // should complete only after that promise does.
-                        _chain(newResult, ldeferred);
+                        when(newResult, ldeferred.resolve, ldeferred.reject, ldeferred.progress);
 
                     } else {
                         // Complete deferred from chained then()
@@ -299,34 +324,30 @@ define(function() {
          * @namespace Promise
          * @name Promise
          */
-        promise =
+        promise = new Promise();
+        promise.then = deferred.then = then;
+
         /**
          * The {@link Promise} for this {@link Deferred}
          * @memberOf Deferred
          * @name promise
          * @type {Promise}
          */
-            deferred.promise = freeze({
-                then: (deferred.then = then)
-            });
+        deferred.promise = freeze(promise);
 
         /**
-         * The Resolver API
+         * The {@link Resolver} for this {@link Deferred}
          * @namespace Resolver
          * @name Resolver
-         */
-        resolver =
-        /**
-         * The {@link Resolver} for this {@link Deferred}
          * @memberOf Deferred
          * @name resolver
          * @type {Resolver}
          */
-            deferred.resolver = freeze({
-                resolve:  (deferred.resolve  = resolve),
-                reject:   (deferred.reject   = reject),
-                progress: (deferred.progress = progress)
-            });
+        deferred.resolver = freeze({
+            resolve:  (deferred.resolve  = resolve),
+            reject:   (deferred.reject   = reject),
+            progress: (deferred.progress = progress)
+        });
 
         return deferred;
     }
@@ -367,16 +388,16 @@ define(function() {
     function when(promiseOrValue, callback, errback, progressHandler) {
         // Get a promise for the input promiseOrValue
         // See promise()
-        var inputPromise = promise(promiseOrValue);
+        var trustedPromise = promise(promiseOrValue);
 
         // Register promise handlers
-        return inputPromise.then(callback, errback, progressHandler);
+        return trustedPromise.then(callback, errback, progressHandler);
     }
 
     /**
-     * Returns promiseOrValue if promiseOrValue is a {@link Promise}, or a new,
-     * already-resolved {@link Promise} whose resolution value is promiseOrValue if
-     * promiseOrValue is an immediate value.
+     * Returns promiseOrValue if promiseOrValue is a {@link Promise}, a new Promise if
+     * promiseOrValue is a foreign promise, or a new, already-resolved {@link Promise}
+     * whose resolution value is promiseOrValue if promiseOrValue is an immediate value.
      *
      * Note that this function is not safe to export since it will return its
      * input when promiseOrValue is a {@link Promise}
@@ -385,29 +406,44 @@ define(function() {
      *
      * @param promiseOrValue anything
      *
-     * @returns if promiseOrValue is a {@link Promise} returns promiseOrValue,
-     *   otherwise, returns a new, already-resolved, {@link Promise} whose resolution
-     *   value is promiseOrValue.
+     * @returns Guaranteed to return a trusted Promise.  If promiseOrValue is a when.js {@link Promise}
+     *   returns promiseOrValue, otherwise, returns a new, already-resolved, when.js {@link Promise}
+     *   whose resolution value is:
+     *   * the resolution value of promiseOrValue if it's a foreign promise, or
+     *   * promiseOrValue if it's a value
      */
     function promise(promiseOrValue) {
-        return isPromise(promiseOrValue) ? promiseOrValue : resolved(promiseOrValue);
-    }
+        var promise, deferred;
 
-    /**
-     * Creates a promise that is immediately resolved to the supplied value.
-     *
-     * @private
-     *
-     * @param value anything
-     *
-     * @return {Promise} a new, already resolved {@link Promise} whose resolution
-     * value is the supplied value.
-     */
-    function resolved(value) {
-        // TODO: Consider making this public, along with a corresponding rejected()
-        var deferred = defer();
-        deferred.resolve(value);
-        return deferred.promise;
+        if(promiseOrValue instanceof Promise) {
+            // It's a when.js promise, so we trust it
+            promise = promiseOrValue;
+
+        } else {
+            // It's not a when.js promise.  Check to see if it's a foreign promise
+            // or a value.
+            deferred = defer();
+
+            if(isPromise(promiseOrValue)) {
+                // It's a compliant promise, but we don't know where it came from,
+                // so we don't trust its implementation entirely.  Introduce a trusted
+                // middleman when.js promise
+
+                // IMPORTANT: This is the only place when.js should ever call .then() on
+                // an untrusted promise.
+                promiseOrValue.then(deferred.resolve, deferred.reject, deferred.progress);
+
+            } else {
+                // It's a value, not a promise.  Create an already-resolved promise
+                // for it.
+                deferred.resolve(promiseOrValue);
+
+            }
+
+            promise = deferred.promise;
+        }
+
+        return promise;
     }
 
     /**
@@ -576,6 +612,8 @@ define(function() {
         i = promisesOrValues.length;
         results = allocateArray(i);
 
+        // Since mapFunc may be async, get all invocations of it into flight
+        // asap, and then use reduce() to collect all the results
         for(;i >= 0; --i) {
             if(i in promisesOrValues)
                 results[i] = when(promisesOrValues[i], mapFunc);
@@ -616,7 +654,7 @@ define(function() {
         // to the actual reduce engine below.
 
         // Wrap the supplied reduceFunc with one that handles promises and then
-        // deletegates to the supplied.
+        // delegates to the supplied.
 
         args = [
             function (current, val, i) {
@@ -635,7 +673,7 @@ define(function() {
 
     /**
      * Ensure that resolution of promiseOrValue will complete resolver with the completion
-     * value of promiseOrValue, or instead with optionalValue if it is provided.
+     * value of promiseOrValue, or instead with resolveValue if it is provided.
      *
      * @memberOf when
      *
@@ -646,48 +684,15 @@ define(function() {
      * @returns {Promise}
      */
     function chain(promiseOrValue, resolver, resolveValue) {
-        var inputPromise, initChain;
+        var useResolveValue = arguments.length > 2;
 
-        inputPromise = promise(promiseOrValue);
-
-        // Check against args length instead of resolvedValue === undefined, since
-        // undefined may be a valid resolution value.
-        initChain = arguments.length > 2
-            ? function(resolver) { return _chain(inputPromise, resolver, resolveValue); }
-            : function(resolver) { return _chain(inputPromise, resolver); };
-
-        // Setup chain to supplied resolver
-        initChain(resolver);
-
-        // Setup chain to new promise
-        return initChain(when.defer()).promise;
-    }
-
-    /**
-     * @private
-     * Internal chain helper that does not create a new deferred/promise
-     * Always returns it's 2nd arg.
-     * NOTE: deferred must be a when.js deferred, or a resolver whose functions
-     * can be called without their original context.
-     *
-     * @param promise
-     * @param deferred
-     * @param resolveValue
-     *
-     * @returns deferred
-     */
-    function _chain(promise, deferred, resolveValue) {
-        promise.then(
-            // If resolveValue was supplied, need to wrap up a new function
-            // If not, can use deferred.resolve directly
-            arguments.length > 2
-                ? function() { deferred.resolve(resolveValue); }
-                : deferred.resolve,
-            deferred.reject,
-            deferred.progress
+        return when(promiseOrValue,
+            function(val) {
+                resolver.resolve(useResolveValue ? resolveValue : val);
+            },
+            resolver.reject,
+            resolver.progress
         );
-
-        return deferred;
     }
 
     //

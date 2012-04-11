@@ -5,8 +5,7 @@
  */
 
 /**
- * Builder plugin for cram
- * https://github.com/unscriptable/cram
+ * Builder plugin for r.js
  */
 define([ 'wire/base' ], function() {
 
