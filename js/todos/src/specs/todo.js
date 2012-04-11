@@ -44,6 +44,8 @@ define( {
 
         // Attributes
         { $ref: 'todo_attributes' }, // Set the models initial attributes to those passed into the wire spec
+        // OR
+        // [], // This works, but has empty attrs
 
         // Options
         {

@@ -19,6 +19,8 @@ define( function( require ) {
 
       var self = this;
 
+      console.log( 'PASSED IN MIXIN:', { 'todo_attributes': attributes } );
+
       // Run the function created in our wiring spec, to create necessary objects
       // Pass in our attributes so they can be used in the creation of the model
       // BEWARE: Wire does magic here!

@@ -6,6 +6,10 @@ define( function( require ) {
   // Todo Model
   return Backbone.Model.extend({
 
+    initialize: function( attrs, options ) {
+      console.log( 'RECEIVED "todo_attributes":', attrs );
+    },
+
     // Default attributes for the todo
     defaults: {
       content: "empty todo...",
