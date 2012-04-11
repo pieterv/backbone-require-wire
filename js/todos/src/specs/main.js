@@ -69,7 +69,7 @@ define( {
   },
 
   plugins: [
-    //{ module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
+    { module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
     { module: 'wire/jquery/dom' },
     { module: 'wire/backbone/events' }
   ]

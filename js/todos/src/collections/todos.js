@@ -61,7 +61,7 @@ define( function( require ) {
     },
 
     // Save all of the todo items under the `"todos"` namespace.
-    localStorage: new Store("todos-backbone-curl-wire"),
+    localStorage: new Store("todos-backbone-require-wire"),
 
     // Filter down the list of all todo items that are finished.
     done: function() {

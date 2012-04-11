@@ -71,11 +71,13 @@ define( {
     },
 
     // Save model to localstorage after creating it
-    init: 'save'
+    init: {
+      'save': []
+    }
   },
 
   plugins: [
-    //{ module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
+    { module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
     { module: 'wire/backbone/events' }
   ]
 
