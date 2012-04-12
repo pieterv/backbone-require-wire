@@ -5,7 +5,9 @@
     spyMatcherHash = {},
     unusualMatchers = {
       "returned": "toHaveReturned",
-      "alwaysReturned": "toHaveAlwaysReturned"
+      "alwaysReturned": "toHaveAlwaysReturned",
+      "threw": "toHaveThrown",
+      "alwaysThrew": "toHaveAlwaysThrown"
     },
 
   getMatcherFunction = function(sinonName) {

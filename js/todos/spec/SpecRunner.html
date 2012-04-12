@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  
+  <title>Jasmine Test Runner</title>
+
+  <!-- include Jasmine source files -->
+  <link rel="stylesheet" type="text/css" href="../../_libs/jasmine/jasmine.css">
+  <script type="text/javascript" src="../../_libs/jasmine/jasmine-1.1.0.js"></script>
+  <script type="text/javascript" src="../../_libs/jasmine/jasmine-html.js"></script>
+
+  <!-- include Matcher source files -->
+  <script type="text/javascript" src="../../_libs/sinon/sinon-1.3.1.js"></script>
+  <script type="text/javascript" src="../../_libs/jasmine/jasmine-sinon.js"></script>
+  <script type="text/javascript" src="../../_libs/jasmine/jasmine-jquery.js"></script>
+
+  <!-- include source files here -->
+  <script src="../../_libs/requirejs/require.js"></script>
+  <script src="../src/config.js"></script>
+  <script>
+    requirejs.config( {
+      baseUrl: '../src',
+      waitSeconds: 5
+    } );
+
+    require( [
+
+      // Views
+      'spec/views/app',
+      'spec/views/todo',
+
+      // Collections
+      'spec/collections/todos',
+
+      // Models
+      'spec/models/todo'
+
+    ], function() {
+
+      // Run Jasmine
+      jasmine.getEnv().addReporter( new jasmine.TrivialReporter() );
+      jasmine.getEnv().execute();
+
+    } );
+  </script>
+
+</head>
+<body>
+
+</body>
+</html>

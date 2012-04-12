@@ -16,7 +16,8 @@ require.config( {
 	paths: {
 		text: '../../_libs/requirejs/text',
 		'wire/domReady': '../../_libs/requirejs/domReady',
-		hbs: '../../_libs/handlebars/hbs'
+		hbs: '../../_libs/handlebars/hbs',
+		spec: '../spec'
 	},
 	
 	packages: [
