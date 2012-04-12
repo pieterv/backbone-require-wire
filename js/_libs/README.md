@@ -1,5 +1,5 @@
 # Module Libraries
-
+List of libraries used by this project and details around them. Mostly useful for updating projects.
 
 * Version: Version number of the library
 * Global: Global variables the library creates (some can be removed via noConflict calls)
@@ -70,7 +70,7 @@ Wire.js is an Inversion of Control Container for Javascript apps.
 
 * Version: 0.8.0
 * Dependencies: When, AOP
-* Repo: https://github.com/cujojs/wire.git
+* Repo: https://github.com/cujojs/wire
 * Docs: https://github.com/cujojs/wire/wiki
 
 ## When
@@ -84,3 +84,21 @@ Aspect orientated programming, used by the wire/debug plugin
 
 * Version: 0.5.3
 * Repo: https://github.com/cujojs/aop
+
+## Jasmine
+A lightweight JavaScript BDD/spec/testing framework.
+
+* Version: 1.1.0
+* Global: describe, it (see docs for all)
+* Repo: https://github.com/pivotal/jasmine
+* Docs: http://pivotal.github.com/jasmine/
+
+## Sinon
+Standalone test spies, stubs and mocks for JavaScript
+
+* Version: 1.3.2
+* Global: sinon
+* Repo: https://github.com/cjohansen/Sinon.JS
+* Docs: http://sinonjs.org/
+
+
