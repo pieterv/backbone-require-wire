@@ -10,7 +10,7 @@ Install locally via git
 
 This includes all needed libs.
 
-You will need a local webserver to demo the project locally.
+You will need a local web server to demo the project locally.
 
 ## Demo
 
@@ -46,7 +46,7 @@ All builds can then be run from the `js/todos/src` directory and with `make` com
 
 ## Libraries
 
-This base application takes advantage of many libararies and plugins, here are the base ones:
+This base application takes advantage of many libraries and plugins, here are the base ones:
 
 * Backbone
 * Underscore
