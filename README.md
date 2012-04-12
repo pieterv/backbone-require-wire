@@ -10,9 +10,10 @@ Install locally via git
 
 This includes all needed libs.
 
-You will need a local webserver to demo the project.
+You will need a local webserver to demo the project locally.
 
 ## Demo
+
 
 Local:
 Open [http://localhost/backbone-require-wire/index.html](http://localhost/backbone-require-wire/index.html)
