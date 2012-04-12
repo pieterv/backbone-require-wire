@@ -5,7 +5,7 @@
 	<link rel="stylesheet" href="css/todos.css">
 
 	<!-- <script src="js/_libs/requirejs/require.js"></script> -->
-	<script src="js/_libs/requirejs_107/require.js"></script>
+	<script src="js/_libs/requirejs/require.js"></script>
 
 	<script>
 	if ( window.location.hash === '#dev' ) { // Is dev mode
@@ -15,16 +15,13 @@
 		require.config( {
 			baseUrl: 'js/todos/build',
 			paths: {
-				//"text": "../../_libs/requirejs/plugins/text"
-				"text": "../../_libs/requirejs_107/text"
+				"text": "../../_libs/requirejs/text"
 			},
 			packages: [
-				{ name: 'wire', location: '../../_libs/wire_080-rc', main: 'wire' }
+				{ name: 'wire' }
 			]
 		} );
 
-		// Feed in our data
-		//define( 'data/stuff', [], {} );
 	}
 	</script>
 

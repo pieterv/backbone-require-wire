@@ -10,18 +10,15 @@
 /*global require: false, XMLHttpRequest: false, ActiveXObject: false,
 define: false, process: false, window: false */  
 define([
-//>>excludeStart('excludeAfterBuild', pragmas.excludeAfterBuild)
+//>>excludeStart('excludeHbs', pragmas.excludeHbs)
 'Handlebars', 'underscore', 'Handlebars/i18nprecompile', 'json2'
-//>>excludeEnd('excludeAfterBuild')
+//>>excludeEnd('excludeHbs')
 ], function (
-//>>excludeStart('excludeAfterBuild', pragmas.excludeAfterBuild)
+//>>excludeStart('excludeHbs', pragmas.excludeHbs)
  Handlebars, _, precompile, JSON
-//>>excludeEnd('excludeAfterBuild')
+//>>excludeEnd('excludeHbs')
 ) {
-// NOTE :: if you want to load template in production outside of the build, either precompile
-// them into modules or take out the conditional build stuff here
-
-//>>excludeStart('excludeAfterBuild', pragmas.excludeAfterBuild)
+//>>excludeStart('excludeHbs', pragmas.excludeHbs)
   var fs, getXhr,
         progIds = ['Msxml2.XMLHTTP', 'Microsoft.XMLHTTP', 'Msxml2.XMLHTTP.4.0'],
         fetchText = function () {
@@ -29,7 +26,7 @@ define([
         },
         buildMap = [],
         filecode = "w+",
-        templateExtension = ".hbs",
+        templateExtension = "hbs",
         customNameExtension = "@hbs",
         devStyleDirectory = "/demo/styles/",
         buildStyleDirectory = "/demo-build/styles/",
@@ -112,13 +109,9 @@ define([
       }
     };
     var styleList = [], styleMap = {};
-//>>excludeEnd('excludeAfterBuild')
+//>>excludeEnd('excludeHbs')
 
       return {
-
-        setExtension : function (ext) {
-          templateExtension = ext;
-        },
 
         get: function () {
             return Handlebars;
@@ -135,10 +128,10 @@ define([
         version: '1.0.3beta',
 
         load: function (name, parentRequire, load, config) {
-          //>>excludeStart('excludeAfterBuild', pragmas.excludeAfterBuild)
-            
+          //>>excludeStart('excludeHbs', pragmas.excludeHbs)
 
             var compiledName = name + customNameExtension,
+                disableI18n = (config.hbs && config.hbs.disableI18n),
                 partialDeps = [];
 
             function recursiveNodeSearch( statements, res ) {
@@ -148,6 +141,9 @@ define([
                 }
                 if ( statement && statement.program && statement.program.statements ) {
                   recursiveNodeSearch( statement.program.statements, res );
+                }
+                if ( statement && statement.program && statement.program.inverse && statement.program.inverse.statements ) {
+                  recursiveNodeSearch( statement.program.inverse.statements, res );
                 }
               });
               return res;
@@ -281,9 +277,7 @@ define([
               };
             }
 
-            var path = parentRequire.toUrl(name + templateExtension);
-            fetchOrGetCached( parentRequire.toUrl('template/i18n/'+(config.locale || "en_us")+'.json'), function (langMap) {
-              langMap = JSON.parse(langMap);
+            function fetchAndRegister(langMap){
               fetchText(path, function (text) {
                   // for some reason it doesn't include hbs _first_ when i don't add it here...
                   var nodes = Handlebars.parse(text),
@@ -293,7 +287,17 @@ define([
                       vars = extDeps.vars,
                       helps = extDeps.helpers || [],
                       depStr = deps.join("', 'hbs!").replace(/_/g, '/'),
-                      helpDepStr = helps.join("', 'template/helpers/"),
+                      helpDepStr = (function (){
+                        var i, paths = [],
+                            pathGetter = config.hbs && config.hbs.helperPathCallback
+                              ? config.hbs.helperPathCallback
+                              : function (name){return 'template/helpers/' + name;};
+
+                        for ( i = 0; i < helps.length; i++ ) {
+                          paths[i] = "'" + pathGetter(helps[i]) + "'"
+                        }
+                        return paths;
+                      })().join(','),
                       debugOutputStart = "",
                       debugOutputEnd   = "",
                       debugProperties = "",
@@ -304,7 +308,7 @@ define([
                     depStr = ",'hbs!" + depStr + "'";
                   }
                   if ( helpDepStr ) {
-                    helpDepStr = ",'template/helpers/" + helpDepStr + "'";
+                    helpDepStr = "," + helpDepStr;
                   }
 
                   
@@ -365,7 +369,8 @@ define([
                                       "t.vars = " + JSON.stringify(vars) + ";\n";
                   }
 
-                  var prec = precompile( text, _.extend( langMap, config.localeMapping ) );
+                  var mapping = disableI18n? false : _.extend( langMap, config.localeMapping ),
+                      prec = precompile( text, mapping );
                   
                   text = "/* START_TEMPLATE */\n" +
                          "define(['hbs','Handlebars'"+depStr+helpDepStr+"], function( hbs, Handlebars ){ \n" +
@@ -418,8 +423,18 @@ define([
                     });
                   }
               });
-            });
-          //>>excludeEnd('excludeAfterBuild')
+            }
+
+            var path = parentRequire.toUrl(name +'.'+ (config.hbs && config.hbs.templateExtension? config.hbs.templateExtension : templateExtension));
+
+            if (disableI18n){
+                fetchAndRegister(false);
+            } else {
+                fetchOrGetCached( parentRequire.toUrl('template/i18n/'+(config.locale || "en_us")+'.json'), function (langMap) {
+                  fetchAndRegister(JSON.parse(langMap));
+                });
+            }
+          //>>excludeEnd('excludeHbs')
         }
       };
 });

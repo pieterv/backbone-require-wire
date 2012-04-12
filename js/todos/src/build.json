@@ -4,18 +4,23 @@
 	"baseUrl": "./",
 	"dir": "../build",
 
-	"optimize": "none",
+	// "optimize": "none", // Turn off uglify optimisations
 
-		// inlining ftw
-		"inlineText": true,
+	"inlineText": true, // Inlining ftw
 
-		// kills unneeded plugin code on build
-		"pragmasOnSave": {
+	// kills unneeded plugin code on build
+	"pragmasOnSave": {
+		// Removes Handlebars.Parser code (used to compile template strings)
+		// set it to `false` if you need template strings even after build
+		"excludeHbsParser" : true,
+		// kills the entire plugin set once it's built.
+		"excludeHbs": true,
+		// Remove i18nprecompile on build
 		"excludeAfterBuild": true
-		},
+	},
 
-		// Set app locale (not used)
-		"locale": "en_us",
+	// Set app locale (not used)
+	"locale": "en_us",
 
 	"urlArgs": "",
 
@@ -23,35 +28,20 @@
 	"mainConfigFile": "config.js",
 
 	"paths": {
-		// Use our r.js builder plugin
-		"wire/build/amd/builder": "../../_libs/wire_080-rc/rjs/builder",
-		"wire/debug": "../../_libs/wire_080-rc/plugin-base/live", // Override debug for built mode
 
-		"wire/domReady": "../../_libs/requirejs_107/domReady",
+		// Wire
+		"wire/build/amd/builder": "../../_libs/wire/rjs/builder", // Use our r.js builder plugin
+		"wire/debug": "../../_libs/wire/plugin-base/live", // Override debug for built mode
+		"wire/domReady": "../../_libs/requirejs/domReady",
 		
+		// Handlebars
 		"hbs": "../../_libs/handlebars/hbs"
 	},
 
 	"modules": [
 		{
 			"name": "todos",
-			"include": [
-
-				// // Wire plugins
-				// "wire/jquery/dom",
-				// "wire/underscore/template",
-				// "wire/backbone/events",
-				// //"wire/debug",
-
-				// // Spec Main Modules
-				// "views/app",
-				// "collections/todos",
-				// "specs/todo",
-
-				// // Spec Todo Modules
-				// "views/todo",
-				// "models/todo"
-			]
+			"include": []
 		}
 	]
 

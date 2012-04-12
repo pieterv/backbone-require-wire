@@ -44,13 +44,12 @@ define( {
 
         // Attributes
         { $ref: 'todo_attributes' }, // Set the models initial attributes to those passed into the wire spec
-        // OR
-        // [], // This works, but has empty attrs
 
         // Options
         {
           // Add the collection to the model so backbone has access to it
-          collection: { $ref: 'collection' }
+          collection: { $ref: 'collection' },
+          parse: true
         }
 
       ]

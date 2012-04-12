@@ -1,5 +1,5 @@
 /**
- * @license r.js 1.0.5+ Copyright (c) 2010-2012, The Dojo Foundation All Rights Reserved.
+ * @license r.js 1.0.7+ Fri, 30 Mar 2012 00:24:35 GMT Copyright (c) 2010-2012, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
  * see: http://github.com/jrburke/requirejs for details
  */
@@ -11,16 +11,16 @@
  * the shell of the r.js file.
  */
 
-/*jslint strict: false, evil: true, nomen: false */
+/*jslint evil: true, nomen: true */
 /*global readFile: true, process: false, Packages: false, print: false,
-console: false, java: false, module: false */
+console: false, java: false, module: false, requirejsVars */
 
 var requirejs, require, define;
 (function (console, args, readFileFunc) {
 
     var fileName, env, fs, vm, path, exec, rhinoContext, dir, nodeRequire,
         nodeDefine, exists, reqMain, loadedOptimizedLib,
-        version = '1.0.5+',
+        version = '1.0.7+ Fri, 30 Mar 2012 00:24:35 GMT',
         jsSuffixRegExp = /\.js$/,
         commandOption = '',
         useLibLoaded = {},
@@ -102,7 +102,7 @@ var requirejs, require, define;
     }
 
     /** vim: et:ts=4:sw=4:sts=4
- * @license RequireJS 1.0.5 Copyright (c) 2010-2012, The Dojo Foundation All Rights Reserved.
+ * @license RequireJS 1.0.7 Copyright (c) 2010-2012, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
  * see: http://github.com/jrburke/requirejs for details
  */
@@ -112,7 +112,7 @@ var requirejs, require, define;
 
 (function () {
     //Change this version number for each release.
-    var version = "1.0.5",
+    var version = "1.0.7",
         commentRegExp = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/mg,
         cjsRequireRegExp = /require\(\s*["']([^'"\s]+)["']\s*\)/g,
         currDirRegExp = /^\.\//,
@@ -526,18 +526,19 @@ var requirejs, require, define;
                 fullName = map.fullName,
                 args = manager.deps,
                 listeners = manager.listeners,
+                execCb = config.requireExecCb || req.execCb,
                 cjsModule;
 
             //Call the callback to define the module, if necessary.
             if (cb && isFunction(cb)) {
                 if (config.catchError.define) {
                     try {
-                        ret = req.execCb(fullName, manager.callback, args, defined[fullName]);
+                        ret = execCb(fullName, manager.callback, args, defined[fullName]);
                     } catch (e) {
                         err = e;
                     }
                 } else {
-                    ret = req.execCb(fullName, manager.callback, args, defined[fullName]);
+                    ret = execCb(fullName, manager.callback, args, defined[fullName]);
                 }
 
                 if (fullName) {
@@ -1156,6 +1157,7 @@ var requirejs, require, define;
                 err = makeError("timeout", "Load timeout for modules: " + noLoads);
                 err.requireType = "timeout";
                 err.requireModules = noLoads;
+                err.contextName = context.contextName;
                 return req.onError(err);
             }
 
@@ -1276,7 +1278,7 @@ var requirejs, require, define;
                         } else {
                             //Regular dependency.
                             if (!urlFetched[url] && !loaded[fullName]) {
-                                req.load(context, fullName, url);
+                                (config.requireLoad || req.load)(context, fullName, url);
 
                                 //Mark the URL as fetched, but only if it is
                                 //not an empty: URL, used by the optimizer.
@@ -2246,7 +2248,7 @@ var requirejs, require, define;
                 '\n}(requirejsVars.require, requirejsVars.requirejs, requirejsVars.define));';
     };
 
-    req.load = function (context, moduleName, url) {
+    requirejsVars.nodeLoad = req.load = function (context, moduleName, url) {
         var contents, err;
 
         //Indicate a the module is in process of loading.
@@ -2292,6 +2294,9 @@ var requirejs, require, define;
         text = req.makeNodeWrapper(text);
         return eval(text);
     };
+
+    //Hold on to the original execCb to use in useLib calls.
+    requirejsVars.nodeRequireExecCb = require.execCb;
 }());
 
     }
@@ -2976,15 +2981,17 @@ define('rhino/file', function () {
  * see: http://github.com/jrburke/requirejs for details
  */
 
-/*jslint plusplus: false, strict: false */
-/*global define: false */
+/*jslint plusplus: true */
+/*global define */
 
 define('lang', function () {
+    'use strict';
+
     var lang = {
         backSlashRegExp: /\\/g,
         ostring: Object.prototype.toString,
 
-        isArray: Array.isArray ? Array.isArray : function (it) {
+        isArray: Array.isArray || function (it) {
             return lang.ostring.call(it) === "[object Array]";
         },
 
@@ -2996,19 +3003,36 @@ define('lang', function () {
             return it && it instanceof RegExp;
         },
 
-        /**
-         * Simple function to mix in properties from source into target,
-         * but only if target does not already have a property of the same name.
-         */
-        mixin: function (target, source, override) {
-            //Use an empty object to avoid other bad JS code that modifies
-            //Object.prototype.
-            var empty = {}, prop;
-            for (prop in source) {
-                if (override || !(prop in target)) {
-                    target[prop] = source[prop];
+        _mixin: function(dest, source, override){
+            var name;
+            for (name in source) {
+                if(source.hasOwnProperty(name)
+                    && (override || !dest.hasOwnProperty(name))) {
+                    dest[name] = source[name];
                 }
             }
+
+            return dest; // Object
+        },
+
+        /**
+         * mixin({}, obj1, obj2) is allowed. If the last argument is a boolean,
+         * then the source objects properties are force copied over to dest.
+         */
+        mixin: function(dest){
+            var parameters = Array.prototype.slice.call(arguments),
+                override, i, l;
+
+            if (!dest) { dest = {}; }
+
+            if (parameters.length > 2 && typeof arguments[parameters.length-1] === 'boolean') {
+                override = parameters.pop();
+            }
+
+            for (i = 1, l = parameters.length; i < l; i++) {
+                lang._mixin(dest, parameters[i], override);
+            }
+            return dest; // Object
         },
 
         delegate: (function () {
@@ -7787,7 +7811,7 @@ define('rhino/optimize', ['logger'], function (logger) {
  * see: http://github.com/jrburke/requirejs for details
  */
 
-/*jslint plusplus: false, nomen: false, regexp: false, strict: false */
+/*jslint plusplus: false, nomen: false, regexp: false */
 /*global define: false */
 
 define('optimize', [ 'lang', 'logger', 'env!env/optimize', 'env!env/file', 'parse',
@@ -7820,24 +7844,27 @@ function (lang,   logger,   envOptimize,        file,           parse,
 
     /**
      * Inlines nested stylesheets that have @import calls in them.
-     * @param {String} fileName
-     * @param {String} fileContents
-     * @param {String} [cssImportIgnore]
+     * @param {String} fileName the file name
+     * @param {String} fileContents the file contents
+     * @param {String} cssImportIgnore comma delimited string of files to ignore
+     * @param {Object} included an object used to track the files already imported
      */
-    function flattenCss(fileName, fileContents, cssImportIgnore) {
+    function flattenCss(fileName, fileContents, cssImportIgnore, included) {
         //Find the last slash in the name.
         fileName = fileName.replace(lang.backSlashRegExp, "/");
         var endIndex = fileName.lastIndexOf("/"),
             //Make a file path based on the last slash.
             //If no slash, so must be just a file name. Use empty string then.
-            filePath = (endIndex !== -1) ? fileName.substring(0, endIndex + 1) : "";
+            filePath = (endIndex !== -1) ? fileName.substring(0, endIndex + 1) : "",
+            //store a list of merged files
+            importList = [];
 
         //Make sure we have a delimited ignore list to make matching faster
         if (cssImportIgnore && cssImportIgnore.charAt(cssImportIgnore.length - 1) !== ",") {
             cssImportIgnore += ",";
         }
 
-        return fileContents.replace(cssImportRegExp, function (fullMatch, urlStart, importFileName, urlEnd, mediaTypes) {
+        fileContents = fileContents.replace(cssImportRegExp, function (fullMatch, urlStart, importFileName, urlEnd, mediaTypes) {
             //Only process media type "all" or empty media type rules.
             if (mediaTypes && ((mediaTypes.replace(/^\s\s*/, '').replace(/\s\s*$/, '')) !== "all")) {
                 return fullMatch;
@@ -7859,10 +7886,21 @@ function (lang,   logger,   envOptimize,        file,           parse,
                 //and we will just skip that import.
                 var fullImportFileName = importFileName.charAt(0) === "/" ? importFileName : filePath + importFileName,
                     importContents = file.readFile(fullImportFileName), i,
-                    importEndIndex, importPath, fixedUrlMatch, colonIndex, parts;
+                    importEndIndex, importPath, fixedUrlMatch, colonIndex, parts, flat;
+
+                //Skip the file if it has already been included.
+                if (included[fullImportFileName]) {
+                    return '';
+                }
+                included[fullImportFileName] = true;
 
                 //Make sure to flatten any nested imports.
-                importContents = flattenCss(fullImportFileName, importContents);
+                flat = flattenCss(fullImportFileName, importContents, cssImportIgnore, included);
+                importContents = flat.fileContents;
+
+                if (flat.importList.length) {
+                    importList.push.apply(importList, flat.importList);
+                }
 
                 //Make the full import path
                 importEndIndex = importFileName.lastIndexOf("/");
@@ -7870,6 +7908,9 @@ function (lang,   logger,   envOptimize,        file,           parse,
                 //Make a file path based on the last slash.
                 //If no slash, so must be just a file name. Use empty string then.
                 importPath = (importEndIndex !== -1) ? importFileName.substring(0, importEndIndex + 1) : "";
+
+                //fix url() on relative import (#5)
+                importPath = importPath.replace(/^\.\//, '');
 
                 //Modify URL paths to match the path represented by this file.
                 importContents = importContents.replace(cssUrlRegExp, function (fullMatch, urlMatch) {
@@ -7902,12 +7943,18 @@ function (lang,   logger,   envOptimize,        file,           parse,
                     return "url(" + parts.join("/") + ")";
                 });
 
+                importList.push(fullImportFileName);
                 return importContents;
             } catch (e) {
-                logger.trace(fileName + "\n  Cannot inline css import, skipping: " + importFileName);
+                logger.warn(fileName + "\n  Cannot inline css import, skipping: " + importFileName);
                 return fullMatch;
             }
         });
+
+        return {
+            importList : importList,
+            fileContents : fileContents
+        };
     }
 
     optimize = {
@@ -7931,10 +7978,36 @@ function (lang,   logger,   envOptimize,        file,           parse,
             var parts = (config.optimize + "").split('.'),
                 optimizerName = parts[0],
                 keepLines = parts[1] === 'keepLines',
-                licenseContents = '',
-                fileContents, optFunc, match, comment;
+                fileContents;
 
             fileContents = file.readFile(fileName);
+
+            fileContents = optimize.js(fileName, fileContents, optimizerName,
+                                       keepLines, config, pluginCollector);
+
+            file.saveUtf8File(outFileName, fileContents);
+        },
+
+        /**
+         * Optimizes a file that contains JavaScript content. Optionally collects
+         * plugin resources mentioned in a file, and then passes the content
+         * through an minifier if one is specified via config.optimize.
+         *
+         * @param {String} fileName the name of the file that matches the
+         * fileContents.
+         * @param {String} fileContents the string of JS to optimize.
+         * @param {String} [optimizerName] optional name of the optimizer to
+         * use. 'uglify' is default.
+         * @param {Boolean} [keepLines] whether to keep line returns in the optimization.
+         * @param {Object} [config] the build config object.
+         * @param {Array} [pluginCollector] storage for any plugin resources
+         * found.
+         */
+        js: function (fileName, fileContents, optimizerName, keepLines, config, pluginCollector) {
+            var licenseContents = '',
+                optFunc, match, comment;
+
+            config = config || {};
 
             //Apply pragmas/namespace renaming
             fileContents = pragma.process(fileName, fileContents, config, 'OnSave', pluginCollector);
@@ -7965,7 +8038,7 @@ function (lang,   logger,   envOptimize,        file,           parse,
                                         config[optimizerName]);
             }
 
-            file.saveUtf8File(outFileName, fileContents);
+            return fileContents;
         },
 
         /**
@@ -7977,21 +8050,25 @@ function (lang,   logger,   envOptimize,        file,           parse,
          * cssImportIgnore options.
          */
         cssFile: function (fileName, outFileName, config) {
+
             //Read in the file. Make sure we have a JS string.
             var originalFileContents = file.readFile(fileName),
-                fileContents = flattenCss(fileName, originalFileContents, config.cssImportIgnore),
-                startIndex, endIndex;
+                flat = flattenCss(fileName, originalFileContents, config.cssImportIgnore, {}),
+                fileContents = flat.fileContents,
+                startIndex, endIndex, buildText;
 
             //Do comment removal.
             try {
-                startIndex = -1;
-                //Get rid of comments.
-                while ((startIndex = fileContents.indexOf("/*")) !== -1) {
-                    endIndex = fileContents.indexOf("*/", startIndex + 2);
-                    if (endIndex === -1) {
-                        throw "Improper comment in CSS file: " + fileName;
+                if (config.optimizeCss.indexOf(".keepComments") === -1) {
+                    startIndex = -1;
+                    //Get rid of comments.
+                    while ((startIndex = fileContents.indexOf("/*")) !== -1) {
+                        endIndex = fileContents.indexOf("*/", startIndex + 2);
+                        if (endIndex === -1) {
+                            throw "Improper comment in CSS file: " + fileName;
+                        }
+                        fileContents = fileContents.substring(0, startIndex) + fileContents.substring(endIndex + 2, fileContents.length);
                     }
-                    fileContents = fileContents.substring(0, startIndex) + fileContents.substring(endIndex + 2, fileContents.length);
                 }
                 //Get rid of newlines.
                 if (config.optimizeCss.indexOf(".keepLines") === -1) {
@@ -8010,6 +8087,14 @@ function (lang,   logger,   envOptimize,        file,           parse,
             }
 
             file.saveUtf8File(outFileName, fileContents);
+
+            //text output to stdout and/or written to build.txt file
+            buildText = "\n"+ outFileName.replace(config.dir, "") +"\n----------------\n";
+            flat.importList.push(fileName);
+            buildText += flat.importList.map(function(path){
+                return path.replace(config.dir, "");
+            }).join("\n");
+            return buildText +"\n";
         },
 
         /**
@@ -8020,17 +8105,19 @@ function (lang,   logger,   envOptimize,        file,           parse,
          * cssImportIgnore options.
          */
         css: function (startDir, config) {
+            var buildText = "",
+                i, fileName, fileList;
             if (config.optimizeCss.indexOf("standard") !== -1) {
-                var i, fileName,
-                    fileList = file.getFilteredFileList(startDir, /\.css$/, true);
+                fileList = file.getFilteredFileList(startDir, /\.css$/, true);
                 if (fileList) {
                     for (i = 0; i < fileList.length; i++) {
                         fileName = fileList[i];
                         logger.trace("Optimizing (" + config.optimizeCss + ") CSS file: " + fileName);
-                        optimize.cssFile(fileName, fileName, config);
+                        buildText += optimize.cssFile(fileName, fileName, config);
                     }
                 }
             }
+            return buildText;
         },
 
         optimizers: {
@@ -8058,7 +8145,8 @@ function (lang,   logger,   envOptimize,        file,           parse,
     };
 
     return optimize;
-});/**
+});
+/**
  * @license RequireJS Copyright (c) 2010-2011, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
  * see: http://github.com/jrburke/requirejs for details
@@ -8085,7 +8173,7 @@ function (file,           pragma,   parse) {
         allowRun = false;
 
         var layer,
-            pluginBuilderRegExp = /(\[?["']?)plugin(B|\-b)uilder(["']?\]?)\s*[=\:]\s*["']([^'"\s]+)["']/,
+            pluginBuilderRegExp = /(["']?)pluginBuilder(["']?)\s*[=\:]\s*["']([^'"\s]+)["']/,
             oldDef;
 
 
@@ -8149,13 +8237,13 @@ function (file,           pragma,   parse) {
          * @returns {Boolean}
          */
         require._isSupportedBuildUrl = function (url) {
-            //Ignore URLs with protocols or question marks, means either network
+            //Ignore URLs with protocols, hosts or question marks, means either network
             //access is needed to fetch it or it is too dynamic. Note that
             //on Windows, full paths are used for some urls, which include
             //the drive, like c:/something, so need to test for something other
             //than just a colon.
             return url.indexOf("://") === -1 && url.indexOf("?") === -1 &&
-                   url.indexOf('empty:') !== 0;
+                   url.indexOf('empty:') !== 0 && url.indexOf('//') !== 0;
         };
 
         //Override define() to catch modules that just define an object, so that
@@ -8194,15 +8282,15 @@ function (file,           pragma,   parse) {
             /*jslint evil: true */
             var contents, pluginBuilderMatch, builderName;
 
-            //Adjust the URL if it was not transformed to use baseUrl.
-            url = normalizeUrlWithBase(context, moduleName, url);
-
             context.scriptCount += 1;
 
             //Only handle urls that can be inlined, so that means avoiding some
             //URLs like ones that require network access or may be too dynamic,
             //like JSONP
             if (require._isSupportedBuildUrl(url)) {
+                //Adjust the URL if it was not transformed to use baseUrl.
+                url = normalizeUrlWithBase(context, moduleName, url);
+                
                 //Save the module name to path  and path to module name mappings.
                 layer.buildPathMap[moduleName] = url;
                 layer.buildFileToModule[url] = moduleName;
@@ -8220,6 +8308,12 @@ function (file,           pragma,   parse) {
                         //Load the file contents, process for conditionals, then
                         //evaluate it.
                         contents = file.readFile(url);
+
+                        //If there is a read filter, run it now.
+                        if (context.config.onBuildRead) {
+                            contents = context.config.onBuildRead(moduleName, url, contents);
+                        }
+
                         contents = pragma.process(url, contents, context.config, 'OnExecute');
 
                         //Find out if the file contains a require() definition. Need to know
@@ -8242,7 +8336,7 @@ function (file,           pragma,   parse) {
                             pluginBuilderMatch = pluginBuilderRegExp.exec(contents);
                             if (pluginBuilderMatch) {
                                 //Load the plugin builder for the plugin contents.
-                                builderName = context.normalize(pluginBuilderMatch[4], moduleName);
+                                builderName = context.normalize(pluginBuilderMatch[3], moduleName);
                                 contents = file.readFile(context.nameToUrl(builderName));
                             }
                         }
@@ -8512,14 +8606,16 @@ define('commonJs', ['env!env/file', 'uglifyjs/index'], function (file, uglify) {
  * see: http://github.com/jrburke/requirejs for details
  */
 
-/*jslint regexp: false, plusplus: false, nomen: false, strict: false  */
-/*global define: false, require: false */
+/*jslint plusplus: true, nomen: true  */
+/*global define, require */
 
 
 define('build', [ 'lang', 'logger', 'env!env/file', 'parse', 'optimize', 'pragma',
          'env!env/load', 'requirePatch'],
 function (lang,   logger,   file,          parse,    optimize,   pragma,
           load,           requirePatch) {
+    'use strict';
+
     var build, buildBaseConfig,
         endsWithSemiColonRegExp = /;\s*$/;
 
@@ -8559,7 +8655,7 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
      * sure to allow absolute paths on Windows, like C:\directory.
      */
     function disallowUrls(path) {
-        if (path.indexOf('://') !== -1 && path !== 'empty:') {
+        if ((path.indexOf('://') !== -1 || path.indexOf('//') === 0) && path !== 'empty:') {
             throw new Error('Path is not supported: ' + path +
                             '\nOptimizer can only handle' +
                             ' local paths. Download the locally if necessary' +
@@ -8669,8 +8765,13 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
             //Adjust baseUrl if config.appDir is in play, and set up build output paths.
             buildPaths = {};
             if (config.appDir) {
-                //All the paths should be inside the appDir
-                buildPaths = paths;
+                //All the paths should be inside the appDir, so just adjust
+                //the paths to use the dirBaseUrl
+                for (prop in paths) {
+                    if (paths.hasOwnProperty(prop)) {
+                        buildPaths[prop] = paths[prop].replace(config.baseUrl, config.dirBaseUrl);
+                    }
+                }
             } else {
                 //If no appDir, then make sure to copy the other paths to this directory.
                 for (prop in paths) {
@@ -8768,7 +8869,7 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
         //things like text loader plugins loading CSS to get the optimized
         //CSS.
         if (config.optimizeCss && config.optimizeCss !== "none" && config.dir) {
-            optimize.css(config.dir, config);
+            buildFileContents += optimize.css(config.dir, config);
         }
 
         if (modules) {
@@ -8921,7 +9022,7 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
 
         //If just have one CSS file to optimize, do that here.
         if (config.cssIn) {
-            optimize.cssFile(config.cssIn, config.out, config);
+            buildFileContents += optimize.cssFile(config.cssIn, config.out, config);
         }
 
         //Print out what was built into which layers.
@@ -9040,7 +9141,7 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
      * to the absFilePath passed in.
      */
     build.makeAbsConfig = function (config, absFilePath) {
-        var props, prop, i, originalBaseUrl;
+        var props, prop, i;
 
         props = ["appDir", "dir", "baseUrl"];
         for (i = 0; (prop = props[i]); i++) {
@@ -9048,24 +9149,17 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
                 //Add abspath if necessary, make sure these paths end in
                 //slashes
                 if (prop === "baseUrl") {
-                    originalBaseUrl = config.baseUrl;
+                    config.originalBaseUrl = config.baseUrl;
                     if (config.appDir) {
                         //If baseUrl with an appDir, the baseUrl is relative to
                         //the appDir, *not* the absFilePath. appDir and dir are
                         //made absolute before baseUrl, so this will work.
-                        config.baseUrl = build.makeAbsPath(originalBaseUrl, config.appDir);
-                        //Set up dir output baseUrl.
-                        config.dirBaseUrl = build.makeAbsPath(originalBaseUrl, config.dir);
+                        config.baseUrl = build.makeAbsPath(config.originalBaseUrl, config.appDir);
                     } else {
                         //The dir output baseUrl is same as regular baseUrl, both
                         //relative to the absFilePath.
                         config.baseUrl = build.makeAbsPath(config[prop], absFilePath);
-                        config.dirBaseUrl = config.dir || config.baseUrl;
                     }
-
-                    //Make sure dirBaseUrl ends in a slash, since it is
-                    //concatenated with other strings.
-                    config.dirBaseUrl = endsWithSlash(config.dirBaseUrl);
                 } else {
                     config[prop] = build.makeAbsPath(config[prop], absFilePath);
                 }
@@ -9111,12 +9205,9 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
                 if (typeof value === 'object' && value &&
                     !lang.isArray(value) && !lang.isFunction(value) &&
                     !lang.isRegExp(value)) {
-                    if (!target[prop]) {
-                        target[prop] = {};
-                    }
-                    lang.mixin(target[prop], source[prop], true);
+                    target[prop] = lang.mixin({}, target[prop], value, true);
                 } else {
-                    target[prop] = source[prop];
+                    target[prop] = value;
                 }
             }
         }
@@ -9138,12 +9229,13 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
         var config = {}, buildFileContents, buildFileConfig, mainConfig,
             mainConfigFile, prop, buildFile, absFilePath;
 
-        lang.mixin(config, buildBaseConfig);
-        lang.mixin(config, cfg, true);
-
         //Make sure all paths are relative to current directory.
         absFilePath = file.absPath('.');
-        build.makeAbsConfig(config, absFilePath);
+        build.makeAbsConfig(cfg, absFilePath);
+        build.makeAbsConfig(buildBaseConfig, absFilePath);
+
+        lang.mixin(config, buildBaseConfig);
+        lang.mixin(config, cfg, true);
 
         if (config.buildFile) {
             //A build file exists, load it to get more config.
@@ -9205,6 +9297,19 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
         //args should take precedence over build file values.
         mixConfig(config, cfg);
 
+
+        //Set final output dir
+        if (config.hasOwnProperty("baseUrl")) {
+            if (config.appDir) {
+                config.dirBaseUrl = build.makeAbsPath(config.originalBaseUrl, config.dir);
+            } else {
+                config.dirBaseUrl = config.dir || config.baseUrl;
+            }
+            //Make sure dirBaseUrl ends in a slash, since it is
+            //concatenated with other strings.
+            config.dirBaseUrl = endsWithSlash(config.dirBaseUrl);
+        }
+
         //Check for errors in config
         if (config.cssIn && !config.out) {
             throw new Error("ERROR: 'out' option missing.");
@@ -9213,7 +9318,15 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
             throw new Error("ERROR: 'baseUrl' option missing.");
         }
         if (!config.out && !config.dir) {
-            throw new Error('Missing either an "out" or "dir" config value.');
+            throw new Error('Missing either an "out" or "dir" config value. ' +
+                            'If using "appDir" for a full project optimization, ' +
+                            'use "dir". If you want to optimize to one file, ' +
+                            'use "out".');
+        }
+        if (config.appDir && config.out) {
+            throw new Error('"appDir" is not compatible with "out". Use "dir" ' +
+                            'instead. appDir is used to copy whole projects, ' +
+                            'where "out" is used to just optimize to one file.');
         }
         if (config.out && config.dir) {
             throw new Error('The "out" and "dir" options are incompatible.' +
@@ -9222,10 +9335,11 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
                             ' or baseUrl directories optimized.');
         }
 
-        if (config.out && !config.cssIn) {
-            //Just one file to optimize.
-
-            //Set up dummy module layer to build.
+        if ((config.name || config.include) && !config.modules) {
+            //Just need to build one file, but may be part of a whole appDir/
+            //baseUrl copy, but specified on the command line, so cannot do
+            //the modules array setup. So create a modules section in that
+            //case.
             config.modules = [
                 {
                     name: config.name,
@@ -9235,6 +9349,10 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
                     excludeShallow: config.excludeShallow
                 }
             ];
+        }
+
+        if (config.out && !config.cssIn) {
+            //Just one file to optimize.
 
             //Does not have a build file, so set up some defaults.
             //Optimizing CSS should not be allowed, unless explicitly
@@ -9452,22 +9570,36 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
                 if (builder.write) {
                     writeApi = function (input) {
                         fileContents += "\n" + addSemiColon(input);
+                        if (config.onBuildWrite) {
+                            fileContents = config.onBuildWrite(moduleName, path, fileContents);
+                        }
                     };
                     writeApi.asModule = function (moduleName, input) {
                         fileContents += "\n" +
                                         addSemiColon(
                                             build.toTransport(anonDefRegExp, namespace, moduleName, path, input, layer));
+                        if (config.onBuildWrite) {
+                            fileContents = config.onBuildWrite(moduleName, path, fileContents);
+                        }
                     };
                     builder.write(parts.prefix, parts.name, writeApi);
                 }
             } else {
                 currContents = file.readFile(path);
 
+                if (config.onBuildRead) {
+                    currContents = config.onBuildRead(moduleName, path, currContents);
+                }
+
                 if (config.namespace) {
                     currContents = pragma.namespace(currContents, config.namespace);
                 }
 
                 currContents = build.toTransport(anonDefRegExp, namespace, moduleName, path, currContents, layer);
+
+                if (config.onBuildWrite) {
+                    currContents = config.onBuildWrite(moduleName, path, currContents);
+                }
 
                 //Semicolon is for files that are not well formed when
                 //concatenated with other content.
@@ -9516,7 +9648,7 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
         //define(\n//begin v1.x content
         //for a comment.
         return new RegExp('(^|[^\\.])(' + (namespace || '').replace(/\./g, '\\.') +
-                          'define|define)\\s*\\(\\s*(\\/\\/[^\\n\\r]*[\\r\\n])?(\\[|function|[\\w\\d_\\$]+\\s*\\)|\\{|["\']([^"\']+)["\'])(\\s*,\\s*f)?');
+                          'define|define)\\s*\\(\\s*(\\/\\/[^\\n\\r]*[\\r\\n])?(\\[|function|[\\w\\d_\\-\\$]+\\s*\\)|\\{|["\']([^"\']+)["\'])(\\s*,\\s*f)?');
     };
 
     build.leadingCommaRegExp = /^\s*,/;
@@ -9640,7 +9772,9 @@ function (lang,   logger,   file,          parse,    optimize,   pragma,
                 }
 
                 var req = requirejs({
-                    context: contextName
+                    context: contextName,
+                    requireLoad: requirejsVars.nodeLoad,
+                    requireExecCb: requirejsVars.nodeRequireExecCb
                 });
 
                 req(['build'], function () {

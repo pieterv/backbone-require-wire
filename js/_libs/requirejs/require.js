@@ -1,5 +1,5 @@
 /** vim: et:ts=4:sw=4:sts=4
- * @license RequireJS 1.0.5 Copyright (c) 2010-2012, The Dojo Foundation All Rights Reserved.
+ * @license RequireJS 1.0.7 Copyright (c) 2010-2012, The Dojo Foundation All Rights Reserved.
  * Available via the MIT or new BSD license.
  * see: http://github.com/jrburke/requirejs for details
  */
@@ -9,7 +9,7 @@
 var requirejs, require, define;
 (function () {
     //Change this version number for each release.
-    var version = "1.0.5",
+    var version = "1.0.7",
         commentRegExp = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/mg,
         cjsRequireRegExp = /require\(\s*["']([^'"\s]+)["']\s*\)/g,
         currDirRegExp = /^\.\//,
@@ -423,18 +423,19 @@ var requirejs, require, define;
                 fullName = map.fullName,
                 args = manager.deps,
                 listeners = manager.listeners,
+                execCb = config.requireExecCb || req.execCb,
                 cjsModule;
 
             //Call the callback to define the module, if necessary.
             if (cb && isFunction(cb)) {
                 if (config.catchError.define) {
                     try {
-                        ret = req.execCb(fullName, manager.callback, args, defined[fullName]);
+                        ret = execCb(fullName, manager.callback, args, defined[fullName]);
                     } catch (e) {
                         err = e;
                     }
                 } else {
-                    ret = req.execCb(fullName, manager.callback, args, defined[fullName]);
+                    ret = execCb(fullName, manager.callback, args, defined[fullName]);
                 }
 
                 if (fullName) {
@@ -1053,6 +1054,7 @@ var requirejs, require, define;
                 err = makeError("timeout", "Load timeout for modules: " + noLoads);
                 err.requireType = "timeout";
                 err.requireModules = noLoads;
+                err.contextName = context.contextName;
                 return req.onError(err);
             }
 
@@ -1173,7 +1175,7 @@ var requirejs, require, define;
                         } else {
                             //Regular dependency.
                             if (!urlFetched[url] && !loaded[fullName]) {
-                                req.load(context, fullName, url);
+                                (config.requireLoad || req.load)(context, fullName, url);
 
                                 //Mark the URL as fetched, but only if it is
                                 //not an empty: URL, used by the optimizer.
