@@ -14,50 +14,51 @@ You will need a local webserver to demo the project locally.
 
 ## Demo
 
+To see the application running you have two options:
 
-Local:
-Open [http://localhost/backbone-require-wire/index.html](http://localhost/backbone-require-wire/index.html)
+* Live: In your browser open [http://pieter-vanderwerff.github.com/backbone-require-wire/](http://pieter-vanderwerff.github.com/backbone-require-wire/)
 
+* Local: In your browser open [http://localhost/backbone-require-wire/index.html](http://localhost/backbone-require-wire/index.html) or where ever you have it locally
 
-## Goals
+By default the application will run in live mode, adding `#dev` to the end of the url will put it in dev mode, which means it will use all files rather than the built one.
 
-* No global pollution
-* Easy to use
-* Require minimal “integration”
-* Easy to embed seamlessly with any testing framework
-* Easily fake any interface
-* Ship with ready-to-use fakes for XMLHttpRequest, timers and more
+## Test
 
-## Develop?
+To access the unit test suite:
 
-Check out [todo.org](http://github.com/cjohansen/Sinon.JS/raw/1.0.0/todo.org) in the project repository
+* Live: In your browser open [http://pieter-vanderwerff.github.com/backbone-require-wire/js/todos/spec/SpecRunner.html](http://pieter-vanderwerff.github.com/backbone-require-wire/js/todos/spec/SpecRunner.html)
 
-## Run the tests
+* Local: In your browser open [http://localhost/backbone-require-wire/js/todos/spec/SpecRunner.html](http://localhost/backbone-require-wire/js/todos/spec/SpecRunner.html) or where ever you have it locally
 
+This always runs in dev mode.
 
-### On Node
+## Build
 
-    $ node test/node/run.js
+To install the build system you will need access to `make` for osx it comes with xcode command line tools, Node and NPM are also needed. Once you have these simply navigate to the `js/todos/src` directory and run `make install`.
 
-### In the browser, via JsTestDriver
+    $ cd js/todos/src
+    $ make install
 
-* Install [Node.js](http://nodejs.org/) &amp; [NPM](http://npmjs.org/)
-* `$ npm install buster-format`
-* Install Java
-* Download [jsTestDriver](http://code.google.com/p/js-test-driver/)
-* Start the JsTestDriver server
-  `$ java -jar JsTestDriver.jar --port 4224`
-* Open a browser, go to [http://localhost:4224/](http://localhost:4224) and click 'Capture this Browser'
-* run the tests
-  `$ java -jar JsTestDriver.jar --tests all --reset`
+All builds can then be run from the `js/todos/src` directory and with `make` command
 
+    $ cd js/todos/src
+    $ make
 
-### On Rhino
+## Libraries
 
-I've added a rudimentary setup for running the tests on Rhino with env.js (as
-this is a fairly common test setup, Sinon should support it). The files are
-located in test/rhino, but there are currently quite a few test failures. I
-believe these are not all bugs - many are probably problems with the tests
-running in Rhino. Run tests from the project root (load paths depend on it):
+This base application takes advantage of many libararies and plugins, here are the base ones:
 
-    $ java -jar js.jar -opt -1 test/rhino/run.js
+* Backbone
+* Underscore
+* jQuery
+* Handlebars
+* Require Handlebars plugin
+* Require
+* r.js
+* Wire
+* When
+* AOP
+* Jasmine
+* Sinon
+
+See the [_libs/README](https://github.com/pieter-vanderwerff/backbone-require-wire/blob/master/js/_libs/README.md) for more info on each.
