@@ -25,7 +25,7 @@
 	"urlArgs": "",
 
 	// Use package settings in the init file
-	"mainConfigFile": "config.js",
+	"mainConfigFile": "amd.base.js",
 
 	"paths": {
 

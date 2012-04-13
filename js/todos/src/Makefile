@@ -2,7 +2,7 @@ build:
 	@echo 'Optimizing...'
 	@rm -r ../build
 	@mkdir ../build
-	@node ../../_libs/rjs/r.js -o build.json
+	@node ../../_libs/rjs/r.js -o amd.build.js
 	@find ../build/* -not -iwholename '*todos.js*' | xargs rm -rf;
 	@echo 'Deleting all files apart from: todos.js'
 	@echo ''

@@ -3,7 +3,7 @@ define(
   'backbone',
   'underscore',
   'when',
-  'collections/todos'
+  'collection/todos'
 ],
 function( Backbone, _, when, Todos ) {
 
@@ -11,6 +11,10 @@ function( Backbone, _, when, Todos ) {
 
     beforeEach( function() {
       this.sync = sinon.stub( Backbone, 'sync' ); // Stop it saving the test models to localstorage
+    } );
+    
+    afterEach( function() {
+      this.sync.restore();
     } );
 
     it( "is a backbone collection", function() {
@@ -120,10 +124,6 @@ function( Backbone, _, when, Todos ) {
 
       expect( todos.done().length ).toEqual( 0 );
       
-    } );
-    
-    afterEach( function() {
-      this.sync.restore();
     } );
 
   } );

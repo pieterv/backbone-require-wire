@@ -2,7 +2,7 @@ define(
 [
   'backbone',
   'jquery',
-  'views/app'
+  'view/app'
 ],
 function( Backbone, $, View ) {
   

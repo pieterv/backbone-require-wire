@@ -8,7 +8,7 @@ define( function( require ) {
 
 
   // Todos Collection
-  return Backbone.Collection.extend({
+  return Backbone.Collection.extend( {
 
     // Will be overwritten with an injected wire function
     _createTodo: function() {},
@@ -83,6 +83,6 @@ define( function( require ) {
       this.invoke( 'save', { 'done': !!done } );
     }
 
-  });
+  } );
   
-});
+} );

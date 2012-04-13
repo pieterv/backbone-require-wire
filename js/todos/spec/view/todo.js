@@ -2,7 +2,7 @@ define(
 [
   'backbone',
   'jquery',
-  'views/todo'
+  'view/todo'
 ],
 function( Backbone, $, View ) {
   

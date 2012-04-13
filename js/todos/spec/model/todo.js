@@ -1,7 +1,7 @@
 define(
 [
   'backbone',
-  'models/todo'
+  'model/todo'
 ],
 function( Backbone, Model ) {
   

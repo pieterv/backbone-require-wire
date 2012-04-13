@@ -17,7 +17,7 @@
 
   <!-- include source files here -->
   <script src="../../_libs/requirejs/require.js"></script>
-  <script src="../src/config.js"></script>
+  <script src="../src/amd.base.js"></script>
   <script>
     requirejs.config( {
       baseUrl: '../src',
@@ -27,14 +27,14 @@
     require( [
 
       // Views
-      'spec/views/app',
-      'spec/views/todo',
+      'spec/view/app',
+      'spec/view/todo',
 
       // Collections
-      'spec/collections/todos',
+      'spec/collection/todos',
 
       // Models
-      'spec/models/todo'
+      'spec/model/todo'
 
     ], function() {
 

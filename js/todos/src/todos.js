@@ -1,4 +1,4 @@
-define( [ 'wire!specs/main' ], function( context ) {
+define( [ 'wire!context/main' ], function( context ) {
 
 	context.collection.fetch();
 

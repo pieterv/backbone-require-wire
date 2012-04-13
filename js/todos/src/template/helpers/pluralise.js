@@ -9,6 +9,6 @@ define( function( require ) {
 		};
 
 	Handlebars.registerHelper( 'pluralise', helper );
-  
+
 	return helper;
 } );

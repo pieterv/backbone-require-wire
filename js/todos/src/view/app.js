@@ -6,7 +6,7 @@ define( function( require ) {
       Backbone = require( 'backbone' );
 
   // Application View
-  return Backbone.View.extend({
+  return Backbone.View.extend( {
 
     // Dom elements
     // These will be overwriten by our wiring spec
@@ -104,6 +104,6 @@ define( function( require ) {
     }
 
 
-  });
+  } );
 
-});
+} );

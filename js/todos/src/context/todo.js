@@ -1,12 +1,12 @@
 define( {
 
   template_todos: {
-    module: 'hbs!templates/todos'
+    module: 'hbs!template/todos'
   },
 
   view: {
     create: {
-      module: 'views/todo'
+      module: 'view/todo'
     },
 
     // Attach properties
@@ -39,7 +39,7 @@ define( {
   model: {
 
     create: {
-      module: 'models/todo',
+      module: 'model/todo',
       args: [
 
         // Attributes

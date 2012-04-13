@@ -1,12 +1,12 @@
 define( {
 
   template_stats: {
-    module: 'hbs!templates/stats'
+    module: 'hbs!template/stats'
   },
 
   app: {
     create: {
-      module: 'views/app',
+      module: 'view/app',
       args: [
         // Options object
         {
@@ -31,8 +31,6 @@ define( {
     // Connect to events
     connect: {
 
-      
-
       collection: {
         'add':   'addOne', // When a model is added, add the view to the app list
         'reset': 'addAll', // When muptliple models are added, add them all to the app list
@@ -45,7 +43,7 @@ define( {
 
   collection: {
     create: {
-      module: 'collections/todos',
+      module: 'collection/todos',
       args: [
         // Default models
         [], // TODO: instead of doing a fetch to get the localstorage todos, we should have a wire plugin get them and pass them in here.
@@ -56,7 +54,7 @@ define( {
     properties: {
       // Whoah! Use the wire factory with the defer option to inject
       // a function that will create a todo (view and model) using another wire spec!
-      _createTodo: { wire: { spec: 'specs/todo', defer: true } }
+      _createTodo: { wire: { spec: 'context/todo', defer: true } }
     },
     // Connect to appropriate events
     connect: {
