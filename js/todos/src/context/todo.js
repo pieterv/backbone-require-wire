@@ -78,7 +78,11 @@ define( {
   },
 
   plugins: [
-    { module: 'wire/debug', trace: true }, // Uncomment to see what's going on inside this spec
+    { module: 'wire/debug', // Uncomment to see what's going on inside this spec
+      trace: {
+        pointcut: /^((?!(model$|constructor$|_)).*)$/ // Stop constructors being wrapped as functions
+      }
+    },
     { module: 'wire/backbone/events' }
   ]
 
